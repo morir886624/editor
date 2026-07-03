@@ -21,6 +21,8 @@ dist-ssr
 .cache
 coverage
 *.tsbuildinfo
+.turbo
+.vite
 
 # Editor directories and files
 .vscode/*
