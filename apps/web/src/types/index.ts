@@ -92,6 +92,9 @@ export interface TextStyle {
   alignment: TextAlignment;
   shadow: boolean; // drop shadow on/off
   background: string; // box background CSS color, or 'transparent' for none
+  /** Line-height multiplier; undefined = automatic per font group
+   *  (1.15 Latin / 1.7 Arabic — see overlayLineHeight in /src/lib/fonts.ts). */
+  lineHeight?: number;
 }
 
 /**
@@ -196,7 +199,12 @@ export interface Clip {
   effects: ClipEffect[];
 }
 
-/** A timed text element rendered on top of the video. */
+/**
+ * A timed text element rendered on top of the video.
+ * Array order in EditorDocument.textOverlays IS the stacking order (first =
+ * bottom, last = top) — both the preview DOM and the export rasterizer render
+ * in array order, so z-order edits are plain array reorders.
+ */
 export interface TextOverlay {
   id: string;
   text: string;
@@ -206,6 +214,13 @@ export interface TextOverlay {
    *  correct across aspect ratios and at export. (50,50) = centered. */
   x: number;
   y: number;
+  /** Rotation about the anchor point, degrees clockwise (0 = horizontal).
+   *  Applied AFTER the animation's translate (screen-space slide) and before
+   *  its scale — the export rasterizer mirrors the same order. */
+  rotation: number;
+  /** Locked overlays ignore preview gestures (drag/resize/rotate/inline edit)
+   *  and the Delete key; the side panel still edits them deliberately. */
+  locked: boolean;
   style: TextStyle;
   animation: TextAnimation;
   slideFrom: SlideDirection; // used only when animation === 'slide'
@@ -232,10 +247,35 @@ export interface AudioTrack {
   fadeOut: number; // seconds
 }
 
+/** Decorative frame styles the video is composited into (stage 9A). */
+export type FrameType = 'none' | 'solid' | 'polaroid' | 'filmstrip' | 'blur';
+
+/**
+ * Project-wide decorative frame: the video is scaled down and composited
+ * inside a styled border filling the chosen aspect ratio. Stored as
+ * parameters (never baked); /src/lib/frame.ts derives the geometry and
+ * background art consumed by BOTH the preview and the export. All sizes are
+ * percentages of the output's SHORT side, so the frame looks identical
+ * across aspect ratios and export resolutions.
+ */
+export interface FrameSettings {
+  type: FrameType;
+  /** Border thickness around the video, % of the short side. */
+  inset: number;
+  /** Corner radius of the inner video rectangle, % of the short side. */
+  cornerRadius: number;
+  /** Background color (hex) — used by 'solid' and 'polaroid'. */
+  color: string;
+  /** Caption drawn in the polaroid's bottom band ('' = none). */
+  caption: string;
+}
+
 /** Project-wide output settings. */
 export interface ProjectSettings {
   aspectRatio: AspectRatio;
   exportResolution: ExportResolution;
+  /** Decorative frame the video sits inside (type 'none' = full bleed). */
+  frame: FrameSettings;
 }
 
 /**

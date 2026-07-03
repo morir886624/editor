@@ -23,6 +23,7 @@ import type {
   EditorDocument,
   ImportedSource,
   ProjectSettings,
+  SlideDirection,
   VideoEffectType,
   TextAnimation,
   TextOverlay,
@@ -35,6 +36,7 @@ import {
   sequenceClips,
 } from '../lib/duration';
 import { DEFAULT_ADJUSTMENTS } from '../lib/effects';
+import { DEFAULT_FRAME } from '../lib/frame';
 import { DEFAULT_EFFECT_INTENSITY } from '../lib/videoEffects';
 import { maxTransitionAt } from '../lib/transitions';
 
@@ -43,6 +45,7 @@ import { maxTransitionAt } from '../lib/transitions';
 const DEFAULT_SETTINGS: ProjectSettings = {
   aspectRatio: '9:16',
   exportResolution: '1080p',
+  frame: { ...DEFAULT_FRAME },
 };
 
 export const DEFAULT_TEXT_STYLE: TextStyle = {
@@ -110,6 +113,14 @@ export interface NewAudioInput {
 export type ClipEffectsPatch = Partial<
   Pick<Clip, 'filter' | 'filterIntensity' | 'speed' | 'audioMuted'>
 > & { adjustments?: Partial<ClipAdjustments> };
+
+/** What "copy style" carries between overlays: the full visual style plus the
+ *  animation — but NOT position, time window, rotation or lock (placement). */
+export interface OverlayStyleClipboard {
+  style: TextStyle;
+  animation: TextAnimation;
+  slideFrom: SlideDirection;
+}
 
 // ---- store shape ----------------------------------------------------------
 
@@ -185,6 +196,17 @@ export interface EditorState extends EditorDocument {
     options?: { history?: boolean },
   ) => void;
   removeTextOverlay: (id: string) => void;
+  /** Clone overlay `id` (same style/rotation/duration), placed at the current
+   *  playhead and nudged a few % so the copy is visibly separate. Selects the
+   *  copy. Returns its id, or null if the source doesn't exist. */
+  duplicateTextOverlay: (id: string) => string | null;
+  /** Move overlay `id` one step up ('forward' = drawn later = on top) or down
+   *  in the stacking order (= array order, see TextOverlay docs). */
+  moveTextOverlayLayer: (id: string, direction: 'forward' | 'backward') => void;
+  /** Style clipboard (UI state, not in undo history). */
+  styleClipboard: OverlayStyleClipboard | null;
+  copyOverlayStyle: (id: string) => void;
+  pasteOverlayStyle: (id: string) => void;
 
   // audio actions
   addAudioTrack: (input: NewAudioInput) => string;
@@ -200,7 +222,9 @@ export interface EditorState extends EditorDocument {
   setSelected: (id: string | null) => void;
   setSelectedTransition: (leftClipId: string | null) => void;
   setPlaying: (playing: boolean) => void;
-  updateSettings: (patch: Partial<ProjectSettings>) => void;
+  /** Settings edits snapshot history like document edits; the frame panel's
+   *  sliders pass { history: false } after a checkpoint() (gesture pattern). */
+  updateSettings: (patch: Partial<ProjectSettings>, options?: { history?: boolean }) => void;
   toggleClipsPanel: () => void;
 
   // history actions
@@ -536,12 +560,80 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       endTime: end,
       x: 50,
       y: 50,
+      rotation: 0,
+      locked: false,
       style: { ...DEFAULT_TEXT_STYLE, ...input.style },
       animation: input.animation ?? 'none',
       slideFrom: 'left',
     };
     set({ textOverlays: [...state.textOverlays, overlay], ...pushHistory(state) });
     return overlay.id;
+  },
+
+  duplicateTextOverlay: (id) => {
+    const state = get();
+    const src = state.textOverlays.find((t) => t.id === id);
+    if (!src) return null;
+    const total = computeTotalDuration(state.clips);
+    // Same duration, placed at the playhead (clamped inside the timeline);
+    // if that collapses (playhead at the very end), keep the source's window.
+    const dur = src.endTime - src.startTime;
+    let start = Math.min(Math.max(0, state.playheadTime), Math.max(0, total - 0.5));
+    let end = Math.min(start + dur, total);
+    if (end - start < 0.1) {
+      start = src.startTime;
+      end = src.endTime;
+    }
+    const copy: TextOverlay = {
+      ...src,
+      id: uid('text'),
+      style: { ...src.style },
+      startTime: start,
+      endTime: end,
+      x: Math.min(95, src.x + 3),
+      y: Math.min(95, src.y + 3),
+      locked: false, // a fresh copy is there to be moved
+    };
+    set({
+      textOverlays: [...state.textOverlays, copy],
+      selectedItemId: copy.id,
+      selectedTransitionId: null,
+      ...pushHistory(state),
+    });
+    return copy.id;
+  },
+
+  moveTextOverlayLayer: (id, direction) => {
+    const state = get();
+    const i = state.textOverlays.findIndex((t) => t.id === id);
+    const j = direction === 'forward' ? i + 1 : i - 1;
+    if (i < 0 || j < 0 || j >= state.textOverlays.length) return;
+    const next = [...state.textOverlays];
+    [next[i], next[j]] = [next[j], next[i]];
+    set({ textOverlays: next, ...pushHistory(state) });
+  },
+
+  styleClipboard: null,
+  copyOverlayStyle: (id) => {
+    const t = get().textOverlays.find((o) => o.id === id);
+    if (!t) return;
+    // UI state only — copying is not an undoable document edit.
+    set({
+      styleClipboard: { style: { ...t.style }, animation: t.animation, slideFrom: t.slideFrom },
+    });
+  },
+  pasteOverlayStyle: (id) => {
+    const state = get();
+    const clip = state.styleClipboard;
+    if (!clip || !state.textOverlays.some((t) => t.id === id)) return;
+    set({
+      textOverlays: state.textOverlays.map((t) =>
+        t.id === id
+          ? { ...t, style: { ...clip.style }, animation: clip.animation, slideFrom: clip.slideFrom }
+          : t,
+      ),
+      ...pushHistory(state),
+    });
   },
 
   updateTextOverlay: (id, patch, options) => {
@@ -621,9 +713,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set({ clipsPanel: { isOpen: !state.clipsPanel.isOpen } });
   },
 
-  updateSettings: (patch) => {
+  updateSettings: (patch, options) => {
     const state = get();
-    set({ settings: { ...state.settings, ...patch }, ...pushHistory(state) });
+    const settings = { ...state.settings, ...patch };
+    if (options?.history === false) set({ settings });
+    else set({ settings, ...pushHistory(state) });
   },
 
   // ---- history actions ----

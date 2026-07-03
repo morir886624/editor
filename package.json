@@ -6,9 +6,13 @@
     "dev": "turbo run dev",
     "build": "turbo run build",
     "lint": "turbo run lint",
-    "preview": "turbo run preview"
+    "preview": "turbo run preview",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
+  "prettier": "@editor/config/prettier",
   "devDependencies": {
+    "prettier": "^3.6.2",
     "turbo": "^2.5.8"
   }
 }

@@ -3,7 +3,7 @@
 //
 // Runs entirely in FFmpeg.wasm, sequentially and memory-conscious:
 //   1. per clip  — write ONE source into MEMFS, render a normalized video
-//      segment (trim -> speed via setpts -> fps -> cover-scale/crop -> color
+//      segment (trim -> speed via setpts -> fps -> contain-scale/pad -> color
 //      ops -> yuv420p, x264) and a matching audio segment (trim -> atempo ->
 //      48k stereo PCM wav; silence when muted/audioless), then DELETE the
 //      source before the next clip;
@@ -11,6 +11,12 @@
 //      PCM copy — PCM is gapless, avoiding AAC priming drift at clip seams);
 //      with transitions: one xfade/acrossfade filter graph (concat filter at
 //      hard-cut seams), which costs a second video encode;
+//   2b. frame    — when a decorative frame is set (stage 9A), composite the
+//      joined video into it: scale it to the frameLayout rectangle, round
+//      corners by alphamerging a canvas-drawn mask PNG, and overlay onto the
+//      background (a rasterized copy of the SAME SVG the preview shows, or a
+//      blurred/dimmed split of the video for blurred-fill). Costs one more
+//      encode — only when a frame is actually set;
 //   3. overlays  — rasterize the text layer to adaptively-sampled transparent
 //      PNGs (lib/overlayRaster.ts) and composite via one `overlay` filter;
 //   4. audio mix — each imported track: atrim -> volume -> afade in/out ->
@@ -39,12 +45,15 @@ import {
   atempoChain,
   colorOpFilters,
   exportDimensions,
+  frameCompositeGraph,
+  framePixelLayout,
   transitionAudioGraph,
   transitionVideoGraph,
   type ExportQuality,
   type SeamSpec,
 } from './exportFilters';
 import { planOverlaySamples, renderOverlayLayer } from './overlayRaster';
+import { rasterizeFrameBackground, renderRoundedMask } from './frameRaster';
 import type { AspectRatio, ExportResolution } from '../types';
 
 export const EXPORT_FPS = 30;
@@ -96,7 +105,9 @@ export async function runExport(
   token: CancelToken,
 ): Promise<ExportResult> {
   // Snapshot the document once — the export renders this exact state.
-  const { clips, textOverlays, audioTracks } = useEditorStore.getState();
+  const { clips, textOverlays, audioTracks, settings } = useEditorStore.getState();
+  const frame = settings.frame;
+  const hasFrame = frame.type !== 'none';
 
   const total = computeTotalDuration(clips);
   if (clips.length === 0) throw new Error('Nothing to export — the timeline is empty.');
@@ -131,10 +142,16 @@ export async function runExport(
   // Joining with transitions re-encodes the full video through xfade; plain
   // concat is a cheap stream copy.
   const concatUnits = hasTransitions ? 3 * total + 0.5 : 0.6;
+  // Compositing the frame re-encodes the full video once more.
+  const frameUnits = hasFrame ? 3 * total + 0.5 : 0;
   const overlayGenUnits = overlaySamples.length * 0.05;
   const finalUnits = total * (hasOverlays ? 3 : 0.5) + music.length * 0.2 + 0.3;
   const totalUnits =
-    unitsPerClip.reduce((a, b) => a + b, 0) + concatUnits + overlayGenUnits + finalUnits;
+    unitsPerClip.reduce((a, b) => a + b, 0) +
+    concatUnits +
+    frameUnits +
+    overlayGenUnits +
+    finalUnits;
 
   let doneUnits = 0;
   let phase = 'Starting…';
@@ -207,8 +224,8 @@ export async function runExport(
         const vf = [
           `setpts=(PTS-STARTPTS)/${clip.speed.toFixed(6)}`,
           `fps=${EXPORT_FPS}`,
-          `scale=${W}:${H}:force_original_aspect_ratio=increase`,
-          `crop=${W}:${H}`,
+          `scale=${W}:${H}:force_original_aspect_ratio=decrease`,
+          `pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:black`,
           'setsar=1',
           ...colorOpFilters(clipColorOps(clip)),
           'format=yuv420p',
@@ -311,6 +328,50 @@ export async function runExport(
       }
       endStep();
 
+      // ---- 2b. composite the decorative frame -------------------------------
+      // The frame is a PROJECT setting, so it composites ONCE on the joined
+      // timeline (after transitions, before text overlays burn on top).
+      let timelineVideo = 'xtl_v.mp4';
+      if (hasFrame) {
+        beginStep('Compositing frame…', frameUnits, total);
+        const fl = framePixelLayout(frame, opts.aspect, W, H);
+        const args: string[] = ['-i', timelineVideo];
+        let bgIndex = -1;
+        if (frame.type !== 'blur') {
+          await write('xfbg.png', await rasterizeFrameBackground(frame, opts.aspect, W, H));
+          bgIndex = 1;
+          // Loop the still at the export fps so overlay timing stays CFR.
+          args.push('-framerate', String(EXPORT_FPS), '-loop', '1', '-i', 'xfbg.png');
+        }
+        let maskIndex = -1;
+        if (fl.radius > 0) {
+          await write('xfmask.png', await renderRoundedMask(fl.w, fl.h, fl.radius));
+          maskIndex = bgIndex >= 0 ? 2 : 1;
+          // Single frame, deliberately NOT looped: framesync's repeatlast
+          // holds it for every video frame, and alphamerge then ends WITH the
+          // video. (A looped mask never ends, and alphamerge keeps repeating
+          // the video's last frame against it — the graph never terminates;
+          // verified against native ffmpeg.)
+          args.push('-i', 'xfmask.png');
+        }
+        await exec(
+          [
+            ...args,
+            '-filter_complex', frameCompositeGraph(fl, W, H, bgIndex, maskIndex),
+            '-map', '[vout]',
+            '-c:v', 'libx264', '-preset', q.preset, '-crf', String(q.crf),
+            'xtl_vf.mp4',
+          ],
+          'Compositing the frame failed.',
+        );
+        created.add('xtl_vf.mp4');
+        await remove(timelineVideo);
+        await remove('xfbg.png');
+        await remove('xfmask.png');
+        timelineVideo = 'xtl_vf.mp4';
+        endStep();
+      }
+
       // ---- 3. rasterize the text overlay layer ------------------------------
       if (hasOverlays) {
         beginStep('Rendering text overlays…', overlayGenUnits);
@@ -364,7 +425,7 @@ export async function runExport(
       // ---- 4 + 5. audio mix + final mux --------------------------------------
       beginStep(hasOverlays ? 'Burning text + encoding…' : 'Mixing audio + muxing…', finalUnits, total);
 
-      const args: string[] = ['-i', 'xtl_v.mp4', '-i', 'xtl_a.wav'];
+      const args: string[] = ['-i', timelineVideo, '-i', 'xtl_a.wav'];
       const ovIndex = hasOverlays ? 2 : -1;
       if (hasOverlays) args.push('-f', 'concat', '-safe', '0', '-i', 'xovlist.txt');
 

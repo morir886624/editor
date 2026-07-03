@@ -21,7 +21,7 @@ import {
   computeTransitionFrame,
   type TransitionLayerStyle,
 } from '../lib/transitions';
-import { computeOverlayRender, overlayTextStyle } from '../lib/overlay';
+import { computeOverlayRender, overlayStaticTransform, overlayTextStyle } from '../lib/overlay';
 import { buildClipFilter } from '../lib/effects';
 import {
   IDENTITY_EFFECTS_FRAME,
@@ -29,6 +29,7 @@ import {
   grainTextureUrl,
 } from '../lib/videoEffects';
 import { useAudioMixer } from '../lib/useAudioMixer';
+import { BLUR_DIM, BLUR_ZOOM, aspectDims, frameBackgroundUrl, frameLayout } from '../lib/frame';
 import { formatTime, formatTimecode } from '../lib/timeline';
 import type { AspectRatio, Clip, TextOverlay } from '../types';
 
@@ -46,6 +47,44 @@ const PRELOAD_LEAD = 0.6;
 const EPS = 1e-4;
 
 const clampPct = (v: number) => Math.min(100, Math.max(0, v));
+const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
+
+// Corner-handle resize bounds for fontSize (cqh) — matches the panel slider.
+const MIN_FONT_SIZE = 2;
+const MAX_FONT_SIZE = 32;
+// Rotation snaps to the nearest multiple of 45° when within this tolerance.
+const ROTATE_SNAP = 5;
+
+// Short side (px) of the blurred-fill backdrop canvas. Deliberately tiny: the
+// upscale to the frame plus the CSS blur produce the soft look, and drawing
+// stays cheap enough to repaint every playhead change.
+const BLUR_BACKING_SHORT = 96;
+
+/**
+ * Repaint the blurred-fill backdrop from the video element showing the clip
+ * under the playhead: cover-crop the source to the canvas aspect, draw it
+ * zoomed by BLUR_ZOOM, and carry the element's own color grade onto the
+ * canvas plus the blur + dim the export's boxblur graph applies (preview-grade
+ * match — CSS gaussian vs FFmpeg boxblur, like the temperature mapping).
+ */
+function paintBlurBackdrop(canvas: HTMLCanvasElement, video: HTMLVideoElement) {
+  const ctx = canvas.getContext('2d');
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  if (!ctx || !vw || !vh) return;
+  const cw = canvas.width;
+  const ch = canvas.height;
+  const targetAR = cw / ch;
+  let sw = vw;
+  let sh = vh;
+  if (vw / vh > targetAR) sw = vh * targetAR;
+  else sh = vw / targetAR;
+  const dw = cw * BLUR_ZOOM;
+  const dh = ch * BLUR_ZOOM;
+  ctx.drawImage(video, (vw - sw) / 2, (vh - sh) / 2, sw, sh, (cw - dw) / 2, (ch - dh) / 2, dw, dh);
+  const grade = video.style.filter && video.style.filter !== 'none' ? `${video.style.filter} ` : '';
+  canvas.style.filter = `${grade}blur(1.6cqmin) brightness(${BLUR_DIM})`;
+}
 
 /**
  * Real-time preview player synced to the timeline.
@@ -69,6 +108,7 @@ export function PreviewPlayer() {
   const playheadTime = useEditorStore((s) => s.playheadTime);
   const isPlaying = useEditorStore((s) => s.isPlaying);
   const aspectRatio = useEditorStore((s) => s.settings.aspectRatio);
+  const frame = useEditorStore((s) => s.settings.frame);
   const textOverlays = useEditorStore((s) => s.textOverlays);
   const selectedItemId = useEditorStore((s) => s.selectedItemId);
   const setPlayhead = useEditorStore((s) => s.setPlayhead);
@@ -90,6 +130,8 @@ export function PreviewPlayer() {
   const fxVignetteRef = useRef<HTMLDivElement>(null);
   const fxGrainRef = useRef<HTMLDivElement>(null);
   const fxFlashRef = useRef<HTMLDivElement>(null);
+  // Blurred-fill frame backdrop, repainted per frame by applyBlend.
+  const frameBlurRef = useRef<HTMLCanvasElement>(null);
 
   const [activeIndex, setActiveIndex] = useState(0);
   const activeRef = useRef(0); // mirrors activeIndex for use inside rAF/async
@@ -98,8 +140,23 @@ export function PreviewPlayer() {
   const preloadedForRef = useRef<string | null>(null); // clip id we've prepped the buddy for
   const isPlayingRef = useRef(isPlaying);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  // Overlay being edited inline (double-click). While set, that overlay
+  // renders as a contenteditable and suppresses drag/animation.
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const editCancelRef = useRef(false); // Escape pressed — skip the blur commit
 
   const total = useMemo(() => totalTimelineDuration(clips), [clips]);
+
+  // Decorative frame geometry/art — same frameLayout()/SVG the export uses.
+  const frameRect = useMemo(() => frameLayout(frame, aspectRatio), [frame, aspectRatio]);
+  const frameBgUrl = useMemo(() => frameBackgroundUrl(frame, aspectRatio), [frame, aspectRatio]);
+  const blurDims = useMemo(() => {
+    const d = aspectDims(aspectRatio);
+    return {
+      width: Math.round(BLUR_BACKING_SHORT * d.w),
+      height: Math.round(BLUR_BACKING_SHORT * d.h),
+    };
+  }, [aspectRatio]);
 
   const elAt = (i: number) => (i === 0 ? videoA.current : videoB.current);
 
@@ -240,14 +297,25 @@ export function PreviewPlayer() {
         grainEl.style.opacity = '0';
       }
     }
+
+    // Blurred-fill frame: repaint the backdrop from the clip under the
+    // playhead (the OUTGOING clip inside a transition overlap — same
+    // preview-grade simplification as the fx layers above).
+    const backdrop = frameBlurRef.current;
+    if (backdrop && state.settings.frame.type === 'blur' && loc) {
+      const srcEl = els.find((el) => el?.dataset.clipId === loc.clip.id);
+      if (srcEl && srcEl.readyState >= 2) paintBlurBackdrop(backdrop, srcEl);
+    }
   };
 
   // Re-blend whenever the playhead or document moves (covers playback — the
-  // rAF loop writes the playhead every frame — seeks, and undo/redo).
+  // rAF loop writes the playhead every frame — seeks, and undo/redo). Frame /
+  // aspect changes join in so the blur backdrop repaints after it (re)mounts
+  // or its canvas is wiped by a backing-size change.
   useEffect(() => {
     applyBlend();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playheadTime, clips, activeIndex]);
+  }, [playheadTime, clips, activeIndex, frame, aspectRatio]);
 
   /** Show a global time on the ACTIVE element; optionally start it playing.
    *  Inside a transition overlap, the incoming clip is prepared on the buddy
@@ -484,29 +552,21 @@ export function PreviewPlayer() {
     fn();
   };
 
-  // --- drag an overlay within the frame; store x/y as % so it's aspect- and
-  //     export-correct. One history checkpoint per drag (then live updates). ---
-  const beginOverlayDrag = (e: ReactPointerEvent, overlay: TextOverlay) => {
-    e.stopPropagation();
-    e.preventDefault();
-    setSelected(overlay.id);
-    const frame = frameRef.current;
-    if (!frame) return;
-    const rect = frame.getBoundingClientRect();
-    const startX = e.clientX;
-    const startY = e.clientY;
-    const origX = overlay.x;
-    const origY = overlay.y;
-    let moved = false;
+  // --- overlay gestures ------------------------------------------------------
+  // Drag / resize / rotate all follow the same shape: pointerdown on the
+  // element (stopPropagation so the timeline/frame doesn't also react), window
+  // listeners for the gesture, ONE history checkpoint on first movement, then
+  // live updates with { history: false } — the whole gesture is one undo step.
 
+  /** Shared tail: checkpoint-once wrapper + window listener wiring. */
+  const runGesture = (apply: (ev: PointerEvent) => void) => {
+    let moved = false;
     const onMove = (ev: PointerEvent) => {
       if (!moved) {
         checkpoint(); // snapshot once, on first actual movement
         moved = true;
       }
-      const nx = clampPct(origX + ((ev.clientX - startX) / rect.width) * 100);
-      const ny = clampPct(origY + ((ev.clientY - startY) / rect.height) * 100);
-      updateTextOverlay(overlay.id, { x: nx, y: ny }, { history: false });
+      apply(ev);
     };
     const onUp = () => {
       window.removeEventListener('pointermove', onMove);
@@ -516,6 +576,135 @@ export function PreviewPlayer() {
     window.addEventListener('pointerup', onUp);
   };
 
+  /** Overlay anchor center in viewport px (the % position on the frame). */
+  const overlayCenterPx = (overlay: TextOverlay) => {
+    const frameEl = frameRef.current;
+    if (!frameEl) return null;
+    const rect = frameEl.getBoundingClientRect();
+    return {
+      rect,
+      cx: rect.left + (overlay.x / 100) * rect.width,
+      cy: rect.top + (overlay.y / 100) * rect.height,
+    };
+  };
+
+  // Drag to move; store x/y as % so it's aspect- and export-correct.
+  const beginOverlayDrag = (e: ReactPointerEvent, overlay: TextOverlay) => {
+    e.stopPropagation();
+    if (editingId === overlay.id) return; // inline edit owns the pointer (caret)
+    e.preventDefault();
+    setSelected(overlay.id);
+    if (overlay.locked) return; // still selectable, never movable
+    const frameEl = frameRef.current;
+    if (!frameEl) return;
+    const rect = frameEl.getBoundingClientRect();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const origX = overlay.x;
+    const origY = overlay.y;
+
+    runGesture((ev) => {
+      const nx = clampPct(origX + ((ev.clientX - startX) / rect.width) * 100);
+      const ny = clampPct(origY + ((ev.clientY - startY) / rect.height) * 100);
+      updateTextOverlay(overlay.id, { x: nx, y: ny }, { history: false });
+    });
+  };
+
+  // Corner handles: scale the distance pointer↔anchor into a fontSize factor.
+  // Distance-based, so it behaves the same at any rotation angle.
+  const beginOverlayResize = (e: ReactPointerEvent, overlay: TextOverlay) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const c = overlayCenterPx(overlay);
+    if (!c) return;
+    const startDist = Math.hypot(e.clientX - c.cx, e.clientY - c.cy);
+    if (startDist < 2) return;
+    const origSize = overlay.style.fontSize;
+
+    runGesture((ev) => {
+      const factor = Math.hypot(ev.clientX - c.cx, ev.clientY - c.cy) / startDist;
+      const fontSize =
+        Math.round(clamp(origSize * factor, MIN_FONT_SIZE, MAX_FONT_SIZE) * 10) / 10;
+      updateTextOverlay(overlay.id, { style: { fontSize } }, { history: false });
+    });
+  };
+
+  // Rotation handle (sits above the box): pointer bearing from the anchor,
+  // +90° because the handle's rest position is straight up. Snaps to the
+  // nearest 45° step when close, so 0/90/180 are easy to hit exactly.
+  const beginOverlayRotate = (e: ReactPointerEvent, overlay: TextOverlay) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const c = overlayCenterPx(overlay);
+    if (!c) return;
+
+    runGesture((ev) => {
+      let deg = (Math.atan2(ev.clientY - c.cy, ev.clientX - c.cx) * 180) / Math.PI + 90;
+      const snapped = Math.round(deg / 45) * 45;
+      if (Math.abs(deg - snapped) <= ROTATE_SNAP) deg = snapped;
+      // normalize to (-180, 180]
+      if (deg > 180) deg -= 360;
+      if (deg <= -180) deg += 360;
+      updateTextOverlay(overlay.id, { rotation: Math.round(deg) }, { history: false });
+    });
+  };
+
+  // --- inline text editing (double-click) ------------------------------------
+
+  const beginInlineEdit = (overlay: TextOverlay) => {
+    if (overlay.locked) return;
+    setPlaying(false); // hold the frame while typing
+    setSelected(overlay.id);
+    editCancelRef.current = false;
+    setEditingId(overlay.id);
+  };
+
+  /** Seed the contenteditable once per edit session: initial text + focus +
+   *  select-all. The div is keyed per mode so React remounts it cleanly. */
+  const seedInlineEdit = (el: HTMLDivElement | null, overlay: TextOverlay) => {
+    if (!el || el.dataset.editFor === overlay.id) return;
+    el.dataset.editFor = overlay.id;
+    el.textContent = overlay.text;
+    el.focus();
+    const sel = window.getSelection();
+    if (sel) {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+  };
+
+  const finishInlineEdit = (overlay: TextOverlay, el: HTMLElement) => {
+    setEditingId(null);
+    if (editCancelRef.current) {
+      editCancelRef.current = false;
+      return;
+    }
+    // innerText maps the contenteditable's line breaks back to \n.
+    const text = el.innerText.replace(/\r\n?/g, '\n').replace(/\n$/, '');
+    if (text !== overlay.text) updateTextOverlay(overlay.id, { text }); // one undo step
+  };
+
+  // Blur commits most edits, but drag handlers preventDefault() on pointerdown,
+  // which SUPPRESSES the focus change — clicking another overlay or a timeline
+  // block would end the edit render without a blur and drop the typed text.
+  // So while editing, watch the store: the moment selection leaves the edited
+  // overlay, commit from the still-mounted contenteditable.
+  const committingRef = useRef(false);
+  useEffect(() => {
+    if (!editingId) return;
+    return useEditorStore.subscribe((s) => {
+      if (s.selectedItemId === editingId || committingRef.current) return;
+      committingRef.current = true;
+      const el = frameRef.current?.querySelector<HTMLElement>('.overlay-item--editing');
+      const overlay = s.textOverlays.find((t) => t.id === editingId);
+      if (el && overlay) finishInlineEdit(overlay, el);
+      else setEditingId(null); // overlay deleted mid-edit — nothing to commit
+      committingRef.current = false;
+    });
+  }, [editingId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <div ref={wrapRef} className={'player' + (isFullscreen ? ' player--fs' : '')}>
       <div className="player__stage">
@@ -524,24 +713,60 @@ export function PreviewPlayer() {
           className="preview__frame"
           style={{ aspectRatio: ASPECT_CSS[aspectRatio] }}
         >
-          <video
-            ref={videoA}
-            className={'preview__video' + (activeIndex === 0 ? '' : ' preview__video--idle')}
-            playsInline
-            preload="auto"
-          />
-          <video
-            ref={videoB}
-            className={'preview__video' + (activeIndex === 1 ? '' : ' preview__video--idle')}
-            playsInline
-            preload="auto"
-          />
+          {/* Decorative frame background (stage 9A): the SAME SVG the export
+              rasterizes, or — for blurred-fill — a low-res canvas copy of the
+              video repainted by applyBlend. */}
+          {frame.type !== 'none' &&
+            (frameBgUrl ? (
+              <div
+                className="frame-bg"
+                style={{ backgroundImage: `url("${frameBgUrl}")` }}
+                aria-hidden="true"
+              />
+            ) : (
+              <canvas
+                ref={frameBlurRef}
+                className="frame-bg"
+                width={blurDims.width}
+                height={blurDims.height}
+                aria-hidden="true"
+              />
+            ))}
 
-          {/* Stage-8 effect layers, above the videos and below the text.
-              Opacity/position are driven per frame by applyBlend. */}
-          <div ref={fxVignetteRef} className="fx-layer fx-layer--vignette" aria-hidden="true" />
-          <div ref={fxGrainRef} className="fx-layer fx-layer--grain" aria-hidden="true" />
-          <div ref={fxFlashRef} className="fx-layer fx-layer--flash" aria-hidden="true" />
+          {/* Video viewport: positioned by frameLayout() percentages; corners
+              round in cqmin (= % of the frame's short side — the same unit
+              the export mask uses). Full-bleed when the frame type is none. */}
+          <div
+            className="frame-viewport"
+            style={{
+              left: `${frameRect.x * 100}%`,
+              top: `${frameRect.y * 100}%`,
+              width: `${frameRect.w * 100}%`,
+              height: `${frameRect.h * 100}%`,
+              borderRadius: frameRect.radiusPct > 0 ? `${frameRect.radiusPct}cqmin` : '0',
+            }}
+          >
+            <video
+              ref={videoA}
+              className={'preview__video' + (activeIndex === 0 ? '' : ' preview__video--idle')}
+              playsInline
+              preload="auto"
+            />
+            <video
+              ref={videoB}
+              className={'preview__video' + (activeIndex === 1 ? '' : ' preview__video--idle')}
+              playsInline
+              preload="auto"
+            />
+
+            {/* Stage-8 effect layers, above the videos and below the text.
+                Opacity/position are driven per frame by applyBlend. They live
+                inside the viewport: vignette/grain/flash belong to the video,
+                not to the frame border. */}
+            <div ref={fxVignetteRef} className="fx-layer fx-layer--vignette" aria-hidden="true" />
+            <div ref={fxGrainRef} className="fx-layer fx-layer--grain" aria-hidden="true" />
+            <div ref={fxFlashRef} className="fx-layer fx-layer--flash" aria-hidden="true" />
+          </div>
 
           {/* Overlay layer: container ignores pointer events so it doesn't
               swallow drops/clicks; each overlay re-enables them. */}
@@ -549,32 +774,84 @@ export function PreviewPlayer() {
             {textOverlays.map((o) => {
               const r = computeOverlayRender(o, playheadTime);
               const selected = o.id === selectedItemId;
+              // Editing requires selection: clicking anywhere else blurs the
+              // contenteditable (which commits + clears editingId), but if
+              // selection ever moves without a blur, this gate ends the edit
+              // render instead of leaving a stray editable behind.
+              const editing = o.id === editingId && selected;
               // Render when visible, or as a faint editor-only ghost when the
               // overlay is selected but the playhead is outside its window.
               if (!r.visible && !selected) return null;
-              const ghost = !r.visible;
+              const ghost = !r.visible && !editing;
+              // Ghost/editing suppress the animation but keep the rotation.
+              const anim = ghost || editing ? overlayStaticTransform(o) : r.transform;
               return (
                 <div
-                  key={o.id}
+                  // Remount when the edit mode flips so React never has to
+                  // reconcile children against user-typed contenteditable DOM.
+                  key={o.id + (editing ? ':edit' : '')}
                   className={
                     'overlay-item' +
                     (selected ? ' overlay-item--selected' : '') +
-                    (ghost ? ' overlay-item--ghost' : '')
+                    (ghost ? ' overlay-item--ghost' : '') +
+                    (editing ? ' overlay-item--editing' : '') +
+                    (o.locked ? ' overlay-item--locked' : '')
                   }
                   style={{
                     left: `${o.x}%`,
                     top: `${o.y}%`,
-                    opacity: ghost ? 0.35 : r.opacity * o.style.opacity,
-                    transform: `translate(-50%, -50%) ${ghost ? 'none' : r.transform}`,
-                    ...overlayTextStyle(o.style),
+                    opacity: ghost ? 0.35 : editing ? o.style.opacity : r.opacity * o.style.opacity,
+                    transform: `translate(-50%, -50%) ${anim}`.trimEnd(),
+                    // Full text (not the typewriter-truncated r.text) so the
+                    // derived RTL direction can't flip mid-animation.
+                    ...overlayTextStyle(o.style, o.text),
                   }}
+                  contentEditable={editing ? 'plaintext-only' : undefined}
+                  suppressContentEditableWarning={editing || undefined}
+                  ref={editing ? (el) => seedInlineEdit(el, o) : undefined}
+                  onBlur={editing ? (e) => finishInlineEdit(o, e.currentTarget) : undefined}
+                  onKeyDown={
+                    editing
+                      ? (e) => {
+                          if (e.key === 'Escape') {
+                            editCancelRef.current = true;
+                            e.currentTarget.blur();
+                          }
+                          e.stopPropagation(); // keep Delete/space/etc. local
+                        }
+                      : undefined
+                  }
                   onPointerDown={(e) => beginOverlayDrag(e, o)}
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    // Direct hits only — a double-click on a resize/rotate
+                    // handle bubbles here and must not start editing.
+                    if (e.target === e.currentTarget) beginInlineEdit(o);
+                  }}
                   onClick={(e) => {
                     e.stopPropagation();
                     setSelected(o.id);
                   }}
                 >
-                  {ghost ? o.text : r.text}
+                  {editing ? null : ghost ? o.text : r.text}
+                  {selected && !editing && !o.locked && (
+                    <>
+                      <span className="ovh ovh--nw" onPointerDown={(e) => beginOverlayResize(e, o)} />
+                      <span className="ovh ovh--ne" onPointerDown={(e) => beginOverlayResize(e, o)} />
+                      <span className="ovh ovh--sw" onPointerDown={(e) => beginOverlayResize(e, o)} />
+                      <span className="ovh ovh--se" onPointerDown={(e) => beginOverlayResize(e, o)} />
+                      <span
+                        className="ovh ovh--rot"
+                        title="Drag to rotate"
+                        onPointerDown={(e) => beginOverlayRotate(e, o)}
+                      />
+                    </>
+                  )}
+                  {selected && o.locked && (
+                    <span className="overlay-lock" title="Locked — unlock in the Text panel">
+                      🔒
+                    </span>
+                  )}
                 </div>
               );
             })}

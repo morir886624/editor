@@ -9,6 +9,7 @@
 
 import type { CSSProperties } from 'react';
 import type { SlideDirection, TextAnimation, TextOverlay, TextStyle } from '../types';
+import { overlayDirection, overlayLineHeight } from './fonts';
 
 // Entrance/exit ramp length (seconds), each clamped to half the overlay length.
 const ENTER = 0.4;
@@ -108,31 +109,53 @@ export function computeOverlayMotion(o: TextOverlay, t: number): OverlayMotion {
 export interface OverlayRender {
   visible: boolean; // is the playhead within [startTime, endTime]?
   opacity: number; // animated opacity (multiply by style.opacity at render)
-  transform: string; // animation transform only (compose with translate(-50%,-50%))
+  /** Animation + rotation transform; '' when identity. Compose AFTER the
+   *  centering translate: `translate(-50%,-50%) ${transform}`. Never 'none' —
+   *  'none' is only valid alone, and appending it would invalidate (and drop)
+   *  the whole declaration, un-centering the overlay. */
+  transform: string;
   text: string; // possibly truncated (typewriter)
+}
+
+/** Rotation-only transform ('' when 0) — for the editor's ghost/inline-edit
+ *  states, which suppress the animation but must keep the stored rotation. */
+export function overlayStaticTransform(o: Pick<TextOverlay, 'rotation'>): string {
+  return o.rotation ? `rotate(${o.rotation}deg)` : '';
 }
 
 /** Resolve an overlay's animated state as CSS, for the preview DOM. */
 export function computeOverlayRender(o: TextOverlay, t: number): OverlayRender {
   const m = computeOverlayMotion(o, t);
-  if (!m.visible) return { visible: false, opacity: 0, transform: 'none', text: o.text };
+  if (!m.visible) {
+    return { visible: false, opacity: 0, transform: overlayStaticTransform(o), text: o.text };
+  }
 
-  let transform = 'none';
-  if (o.animation === 'slide') transform = `translate(${m.dxPct}%, ${m.dyPct}%)`;
-  else if (o.animation === 'pop') transform = `scale(${m.scale})`;
+  // Order matters and the export rasterizer mirrors it: screen-space slide
+  // offset first, then rotation, then the pop scale about the center.
+  const parts: string[] = [];
+  if (m.dxPct !== 0 || m.dyPct !== 0) parts.push(`translate(${m.dxPct}%, ${m.dyPct}%)`);
+  if (o.rotation) parts.push(`rotate(${o.rotation}deg)`);
+  if (m.scale !== 1) parts.push(`scale(${m.scale})`);
 
-  return { visible: true, opacity: m.opacity, transform, text: m.text };
+  return { visible: true, opacity: m.opacity, transform: parts.join(' '), text: m.text };
 }
 
-/** Static (non-animated) CSS for an overlay's text, frame-relative. */
-export function overlayTextStyle(style: TextStyle): CSSProperties {
+/**
+ * Static (non-animated) CSS for an overlay's text, frame-relative.
+ * `text` drives the derived base direction (Arabic => RTL); unicode-bidi
+ * plaintext then lets each line resolve its own direction so mixed
+ * Arabic+Latin content behaves, with no effect on pure-LTR overlays.
+ */
+export function overlayTextStyle(style: TextStyle, text: string): CSSProperties {
   const hasBg = style.background !== 'transparent' && style.background !== '';
   return {
     fontFamily: style.fontFamily,
     fontSize: `${style.fontSize}cqh`,
     color: style.color,
     textAlign: style.alignment,
-    lineHeight: 1.15,
+    direction: overlayDirection(style, text),
+    unicodeBidi: 'plaintext',
+    lineHeight: overlayLineHeight(style),
     WebkitTextStrokeWidth: style.outlineWidth > 0 ? `${style.outlineWidth}em` : undefined,
     WebkitTextStrokeColor: style.outlineColor,
     paintOrder: 'stroke fill', // keep the fill on top of the stroke
@@ -145,13 +168,8 @@ export function overlayTextStyle(style: TextStyle): CSSProperties {
 
 // --- editor option lists ---------------------------------------------------
 
-export const FONTS: { label: string; value: string }[] = [
-  { label: 'Sans', value: 'Inter, system-ui, sans-serif' },
-  { label: 'Serif', value: 'Georgia, "Times New Roman", serif' },
-  { label: 'Mono', value: '"Courier New", monospace' },
-  { label: 'Impact', value: 'Impact, Haettenschweiler, sans-serif' },
-  { label: 'Script', value: '"Brush Script MT", "Segoe Script", cursive' },
-];
+// Font options live in ./fonts.ts (FONT_GROUPS), grouped Standard vs
+// Arabic / Quran and including the runtime-imported KFGQPC entry.
 
 export const ANIMATIONS: { label: string; value: TextAnimation }[] = [
   { label: 'None', value: 'none' },

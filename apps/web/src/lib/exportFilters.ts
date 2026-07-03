@@ -13,8 +13,9 @@
 // to yuv<->rgb conversion rounding.
 // ---------------------------------------------------------------------------
 
-import type { AspectRatio, ExportResolution, TransitionType } from '../types';
+import type { AspectRatio, ExportResolution, FrameSettings, TransitionType } from '../types';
 import type { ColorOp } from './effects';
+import { BLUR_DIM, BLUR_RADIUS_PCT, BLUR_ZOOM, frameLayout } from './frame';
 
 // ---- geometry ---------------------------------------------------------------
 
@@ -127,6 +128,94 @@ export function colorOpFilters(ops: ColorOp[]): string[] {
         return channelMixer(hueRotateMatrix(op.degrees));
     }
   });
+}
+
+// ---- decorative frame (stage 9A) ---------------------------------------------
+
+/** The video rectangle inside the W×H output, in pixels. */
+export interface FramePixelLayout {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** Inner corner radius in pixels (0 = square, no mask needed). */
+  radius: number;
+}
+
+/**
+ * frameLayout()'s fractions converted to output pixels. Width/height and
+ * x/y are rounded to EVEN values so the scaled video and its overlay offset
+ * stay chroma-aligned in yuv420p.
+ */
+export function framePixelLayout(
+  frame: FrameSettings,
+  aspect: AspectRatio,
+  W: number,
+  H: number,
+): FramePixelLayout {
+  const l = frameLayout(frame, aspect);
+  const w = Math.max(2, even(l.w * W));
+  const h = Math.max(2, even(l.h * H));
+  const x = Math.max(0, Math.min(even(l.x * W), W - w));
+  const y = Math.max(0, Math.min(even(l.y * H), H - h));
+  const radius = Math.min(
+    Math.round((l.radiusPct / 100) * Math.min(W, H)),
+    Math.floor(Math.min(w, h) / 2),
+  );
+  return { x, y, w, h, radius };
+}
+
+/**
+ * filter_complex compositing the joined timeline video ([0:v], W×H) into the
+ * project frame, labeled [vout]:
+ *   background  — either the looped background PNG (input `bgIndex`), or for
+ *                 blurred-fill (bgIndex = -1) a zoomed + boxblurred + dimmed
+ *                 split of the video itself (BLUR_* constants shared with the
+ *                 preview canvas);
+ *   video       — scaled down to the layout rectangle; when the corners are
+ *                 rounded (maskIndex >= 0) the single-frame mask PNG is
+ *                 alphamerged on as the alpha channel (framesync repeatlast
+ *                 holds the frame, so the merge ends WITH the video — a
+ *                 looped mask would keep the graph alive forever);
+ *   composite   — overlay at the layout offset. shortest=1 ends the output
+ *                 with the video when the background is an endlessly looped
+ *                 still.
+ */
+export function frameCompositeGraph(
+  layout: FramePixelLayout,
+  W: number,
+  H: number,
+  bgIndex: number,
+  maskIndex: number,
+): string {
+  const parts: string[] = [];
+  let fgIn = '[0:v]';
+  let bgLabel: string;
+
+  if (bgIndex >= 0) {
+    bgLabel = `[${bgIndex}:v]`;
+  } else {
+    const zw = even(W * BLUR_ZOOM);
+    const zh = even(H * BLUR_ZOOM);
+    const r = Math.max(2, Math.round((BLUR_RADIUS_PCT / 100) * Math.min(W, H)));
+    const dim = colorOpFilters([{ type: 'brightness', value: BLUR_DIM }]).join(',');
+    parts.push('[0:v]split=2[xfb][xff]');
+    parts.push(`[xfb]scale=${zw}:${zh},crop=${W}:${H},boxblur=${r}:2,${dim}[xfbg]`);
+    fgIn = '[xff]';
+    bgLabel = '[xfbg]';
+  }
+
+  if (maskIndex >= 0) {
+    parts.push(`${fgIn}scale=${layout.w}:${layout.h},format=yuva420p[xffg]`);
+    parts.push(`[xffg][${maskIndex}:v]alphamerge[xfa]`);
+  } else {
+    parts.push(`${fgIn}scale=${layout.w}:${layout.h}[xfa]`);
+  }
+
+  parts.push(
+    `${bgLabel}[xfa]overlay=x=${layout.x}:y=${layout.y}:shortest=1,format=yuv420p[vout]`,
+  );
+  return parts.join(';');
 }
 
 // ---- transitions --------------------------------------------------------------

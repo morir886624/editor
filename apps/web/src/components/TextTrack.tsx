@@ -25,6 +25,7 @@ export function TextTrack({ total }: { total: number }) {
     e.stopPropagation(); // don't let the timeline scrub
     e.preventDefault();
     setSelected(overlay.id);
+    if (overlay.locked) return; // locked = selectable but not movable in time
 
     const startX = e.clientX;
     const origStart = overlay.startTime;
@@ -81,7 +82,10 @@ export function TextTrack({ total }: { total: number }) {
               className="text-block__handle text-block__handle--left"
               onPointerDown={(e) => beginDrag(e, o, 'left')}
             />
-            <span className="text-block__label">{o.text || 'Text'}</span>
+            <span className="text-block__label">
+              {o.locked ? '🔒 ' : ''}
+              {o.text || 'Text'}
+            </span>
             <span
               className="text-block__handle text-block__handle--right"
               onPointerDown={(e) => beginDrag(e, o, 'right')}

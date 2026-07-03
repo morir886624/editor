@@ -16,13 +16,13 @@
 // ---------------------------------------------------------------------------
 
 import { computeOverlayMotion, overlayEnterExit } from './overlay';
+import { overlayLineHeight } from './fonts';
 import type { TextOverlay, TextStyle } from '../types';
 
 // Matches the preview CSS: .overlay-item { max-width: 92% } and
-// overlayTextStyle() (line-height 1.15, bg padding 0.12em/0.4em, radius
-// 0.18em, shadow '0 0.04em 0.12em rgba(0,0,0,0.75)').
+// overlayTextStyle() (line-height via overlayLineHeight(), bg padding
+// 0.12em/0.4em, radius 0.18em, shadow '0 0.04em 0.12em rgba(0,0,0,0.75)').
 const MAX_WIDTH_FRAC = 0.92;
-const LINE_HEIGHT = 1.15;
 const BG_PAD_X_EM = 0.4;
 const BG_PAD_Y_EM = 0.12;
 const BG_RADIUS_EM = 0.18;
@@ -164,7 +164,7 @@ function drawOverlayAt(
 
   const lines = wrapText(ctx, m.text, maxContent);
   const contentW = lines.reduce((w, l) => Math.max(w, l.width), 0);
-  const lineH = LINE_HEIGHT * fontPx;
+  const lineH = overlayLineHeight(style) * fontPx;
   const boxW = contentW + 2 * padX;
   const boxH = lines.length * lineH + 2 * padY;
   if (boxW <= 0 || boxH <= 0) return false;
@@ -176,13 +176,15 @@ function drawOverlayAt(
 
   // DOM geometry: left/top at (x%, y%), transform translate(-50%,-50%) + anim
   // => element CENTER lands at the anchor, shifted by the slide offset
-  // (a % of the element's own size), then scaled about that center.
+  // (a % of the element's own size), then rotated and scaled about that
+  // center — the same translate → rotate → scale order the preview CSS uses.
   const cx = (o.x / 100) * W + (m.dxPct / 100) * boxW;
   const cy = (o.y / 100) * H + (m.dyPct / 100) * boxH;
 
   ctx.save();
   ctx.globalAlpha = alpha;
   ctx.translate(cx, cy);
+  if (o.rotation) ctx.rotate((o.rotation * Math.PI) / 180);
   ctx.scale(m.scale, m.scale);
 
   if (hasBg) {

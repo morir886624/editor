@@ -4,6 +4,7 @@ import { DebugPanel } from './components/DebugPanel';
 import { NoticeHost } from './components/NoticeHost';
 import { ExportDialog } from './components/ExportDialog';
 import { SplitDialog } from './components/SplitDialog';
+import { useOverlayHotkeys } from './lib/useOverlayHotkeys';
 
 /**
  * App shell: the toolbar on top and the dockable workspace filling the rest.
@@ -12,6 +13,9 @@ import { SplitDialog } from './components/SplitDialog';
  * the floating debug panel, transient notices, and the modal dialogs.
  */
 export default function App() {
+  // Delete / Ctrl+D / undo-redo shortcuts — app-level so they work even when
+  // the preview panel is closed or unfocused.
+  useOverlayHotkeys();
   return (
     <div className="app app--dock">
       <Toolbar />

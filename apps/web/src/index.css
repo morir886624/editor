@@ -3,6 +3,9 @@
    stack: preview (grows) / toolbar / timeline. The debug panel floats on top.
    --------------------------------------------------------------------------- */
 
+/* Self-hosted Arabic-capable overlay fonts (must precede all rules). */
+@import './fonts.css';
+
 :root {
   --bg: #0a0e17;
   --surface: #1a1f2e;
@@ -150,12 +153,89 @@ body {
   outline-offset: 3px;
 }
 
+.overlay-item--editing {
+  cursor: text;
+  user-select: text;
+  outline: 1px solid var(--accent);
+  outline-offset: 3px;
+  min-width: 0.5em; /* an emptied overlay must stay clickable/caret-able */
+}
+
+.overlay-item--locked {
+  cursor: default;
+}
+
+/* Selection chrome: corner resize handles + rotation handle. Children of the
+   overlay item, so they follow its rotation/scale transform automatically. */
+.ovh {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  background: #fff;
+  border: 1.5px solid var(--accent);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+  z-index: 3;
+}
+
+.ovh--nw { left: 0; top: 0; cursor: nwse-resize; }
+.ovh--ne { left: 100%; top: 0; cursor: nesw-resize; }
+.ovh--sw { left: 0; top: 100%; cursor: nesw-resize; }
+.ovh--se { left: 100%; top: 100%; cursor: nwse-resize; }
+
+.ovh--rot {
+  left: 50%;
+  top: -22px;
+  background: var(--accent);
+  cursor: grab;
+}
+
+.overlay-lock {
+  position: absolute;
+  left: 100%;
+  top: 0;
+  transform: translate(6px, -50%);
+  font-size: 12px;
+  line-height: 1;
+  pointer-events: none;
+}
+
+/* ---- decorative frame (stage 9A) ----------------------------------------- */
+/* The video pair renders inside .frame-viewport, positioned by frameLayout()
+   percentages (inline styles); corners round with border-radius in cqmin
+   (= % of the frame's short side — the same unit the export mask uses, since
+   .preview__frame is a size container). The background layer sits behind it:
+   the frame's SVG art, or the blurred-fill <canvas> repainted by applyBlend
+   (its filter — clip grade + blur + dim — is set imperatively there). */
+
+.frame-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-size: 100% 100%;
+  background-repeat: no-repeat;
+}
+
+canvas.frame-bg {
+  width: 100%;
+  height: 100%;
+}
+
+.frame-viewport {
+  position: absolute;
+  overflow: hidden; /* clips the videos + fx layers to the rounded rectangle */
+  z-index: 1;
+  background: #000;
+}
+
 .preview__video {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
-  object-fit: cover; /* fill the chosen aspect frame, cropping, no distortion */
+  object-fit: contain; /* show the whole source, letterboxed on black, no crop */
   background: #000;
 }
 
@@ -895,6 +975,65 @@ body {
   gap: 8px;
 }
 
+/* Manipulation actions row (duplicate / lock / copy-paste style / z-order). */
+.texted__actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.texted__action {
+  padding: 6px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.texted__action:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.texted__action:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.texted__action.is-active {
+  color: #fff;
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+  border-color: transparent;
+  box-shadow: var(--shadow-sm);
+}
+
+/* Small inline helper button inside a slider row (e.g. line-height "auto"). */
+.texted__mini {
+  padding: 3px 8px;
+  font-size: 10px;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.texted__mini:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.texted__mini:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .texted__preset {
   padding: 8px 10px;
   font-size: 11px;
@@ -1031,6 +1170,53 @@ body {
   border: 1px solid var(--danger);
   border-radius: 6px;
   cursor: pointer;
+}
+
+/* ---- text editor: Arabic / Quran section ---------------------------------- */
+
+.texted__arabic {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.texted__group-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.texted__note {
+  margin: 0;
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+
+.texted__note--ok {
+  color: var(--success);
+}
+
+.texted__import {
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px dashed var(--accent);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.texted__import:hover {
+  background: var(--surface-2);
 }
 
 /* ---- clips panel -------------------------------------------------------- */
@@ -1414,6 +1600,40 @@ body {
 .dock-root {
   width: 100%;
   height: 100%;
+}
+
+/* ---- frame panel (stage 9A) ---------------------------------------------- */
+
+.framepanel__colors {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.framepanel__swatch {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.framepanel__swatch:hover {
+  border-color: var(--accent);
+}
+
+.framepanel__swatch.is-active {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.framepanel__hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-dim);
 }
 
 /* Generic panel body: fill the dock panel; --scroll variants own the scrollbar. */

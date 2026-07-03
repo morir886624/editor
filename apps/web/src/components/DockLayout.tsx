@@ -22,6 +22,7 @@ import { TextEditorPanel } from './TextEditorPanel';
 import { EffectsPanel } from './EffectsPanel';
 import { AudioPanel } from './AudioPanel';
 import { TransitionPanel } from './TransitionPanel';
+import { FramePanel } from './FramePanel';
 import { ClipsPanel } from './ClipsPanel';
 import { useEditorStore } from '../store/editorStore';
 import { useExportStore } from '../store/exportStore';
@@ -135,6 +136,15 @@ function TransitionDock() {
   );
 }
 
+function FrameDock() {
+  // Project-level (no selection needed): always shows the frame editor.
+  return (
+    <div className="dock-body dock-body--scroll">
+      <FramePanel />
+    </div>
+  );
+}
+
 function ExportDock() {
   const clips = useEditorStore((s) => s.clips);
   const openExport = useExportStore((s) => s.open);
@@ -180,6 +190,7 @@ const components: IDockviewReactProps['components'] = {
   effects: EffectsDock,
   audio: AudioDock,
   transition: TransitionDock,
+  frame: FrameDock,
   export: ExportDock,
 };
 
@@ -256,6 +267,16 @@ export const DOCK_PANELS: DockPanelDef[] = [
   {
     id: 'transition',
     title: 'Transition',
+    referencePanel: 'effects',
+    referenceDirection: 'within',
+    gridDirection: 'right',
+    initialWidth: 300,
+    minimumWidth: 220,
+    minimumHeight: 120,
+  },
+  {
+    id: 'frame',
+    title: 'Frame',
     referencePanel: 'effects',
     referenceDirection: 'within',
     gridDirection: 'right',
