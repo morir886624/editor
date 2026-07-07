@@ -18,6 +18,7 @@ import type {
   AudioTrack,
   Clip,
   ClipAdjustments,
+  ClipCrop,
   ClipEffect,
   ClipTransition,
   EditorDocument,
@@ -36,6 +37,7 @@ import {
   sequenceClips,
 } from '../lib/duration';
 import { DEFAULT_ADJUSTMENTS } from '../lib/effects';
+import { clampCrop } from '../lib/crop';
 import { DEFAULT_FRAME } from '../lib/frame';
 import { DEFAULT_EFFECT_INTENSITY } from '../lib/videoEffects';
 import { maxTransitionAt } from '../lib/transitions';
@@ -175,6 +177,18 @@ export interface EditorState extends EditorDocument {
     transition: ClipTransition | null,
     options?: { history?: boolean },
   ) => ActionResult;
+  /** Set (or clear with null) a clip's crop rectangle. Pure parameter edit —
+   *  the crop never changes duration, so no 60s guard. Drag gestures on the
+   *  preview use checkpoint + { history: false }. */
+  setClipCrop: (id: string, crop: ClipCrop | null, options?: { history?: boolean }) => void;
+
+  // crop editor UI state (not in undo history)
+  /** Clip currently being reframed on the preview (null = no crop session). */
+  cropEditingClipId: string | null;
+  /** Pixel aspect the crop editor's handles keep (null = free-form). */
+  cropAspectLock: number | null;
+  setCropEditing: (id: string | null) => void;
+  setCropAspectLock: (ratio: number | null) => void;
 
   // trending-effect actions (stage 8) — pure parameter edits, no duration
   // change, so no 60s guard. Sliders use checkpoint + { history: false }.
@@ -270,6 +284,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   playheadTime: 0,
   selectedItemId: null,
   selectedTransitionId: null,
+  cropEditingClipId: null,
+  cropAspectLock: null,
   isPlaying: false,
   clipsPanel: { isOpen: false },
   sources: [],
@@ -377,6 +393,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       selectedItemId: state.selectedItemId === id ? newClip.id : state.selectedItemId,
       selectedTransitionId:
         state.selectedTransitionId === id ? null : state.selectedTransitionId,
+      cropEditingClipId: state.cropEditingClipId === id ? null : state.cropEditingClipId,
       ...pushHistory(state),
     });
     return { ok: true };
@@ -391,6 +408,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       selectedItemId: state.selectedItemId === id ? null : state.selectedItemId,
       selectedTransitionId:
         state.selectedTransitionId === id ? null : state.selectedTransitionId,
+      cropEditingClipId: state.cropEditingClipId === id ? null : state.cropEditingClipId,
       ...pushHistory(state),
     });
   },
@@ -480,6 +498,20 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     else set({ clips: candidate, ...pushHistory(state) });
     return { ok: true };
   },
+
+  setClipCrop: (id, crop, options) => {
+    const state = get();
+    if (!state.clips.some((c) => c.id === id)) return;
+    const clips = state.clips.map((c) =>
+      c.id === id ? { ...c, crop: crop ? clampCrop(crop) : undefined } : c,
+    );
+    // history: false during a drag gesture (a checkpoint was taken at start).
+    if (options?.history === false) set({ clips });
+    else set({ clips, ...pushHistory(state) });
+  },
+
+  setCropEditing: (id) => set({ cropEditingClipId: id }),
+  setCropAspectLock: (ratio) => set({ cropAspectLock: ratio }),
 
   // ---- trending-effect actions (stage 8) ----
   addClipEffect: (clipId, type) => {

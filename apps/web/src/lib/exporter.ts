@@ -40,10 +40,12 @@ import {
   effectiveTransitionDurations,
 } from './duration';
 import { clipColorOps } from './effects';
+import { isFullCrop } from './crop';
 import {
   QUALITY_SETTINGS,
   atempoChain,
   colorOpFilters,
+  cropFilter,
   exportDimensions,
   frameCompositeGraph,
   framePixelLayout,
@@ -222,6 +224,9 @@ export async function runExport(
 
         beginStep(`Rendering clip ${n}…`, 3 * Math.max(segDur, 0.3), segDur);
         const vf = [
+          // Crop first (spatial), then the contain-scale/pad below letterboxes
+          // the crop region — matching the preview's computeCropLayout().
+          ...(isFullCrop(clip.crop) ? [] : [cropFilter(clip.crop!)]),
           `setpts=(PTS-STARTPTS)/${clip.speed.toFixed(6)}`,
           `fps=${EXPORT_FPS}`,
           `scale=${W}:${H}:force_original_aspect_ratio=decrease`,

@@ -147,6 +147,21 @@ export interface ClipEffect {
 }
 
 /**
+ * Per-clip crop / reframe. The rectangle is stored as FRACTIONS of the source
+ * frame (resolution-independent, same rule as overlay geometry): x/y is the
+ * top-left corner, w/h the size, all 0..1. Undefined = full frame. At render
+ * time the crop region is contain-fitted into the output frame — the preview
+ * (video-element layout from /src/lib/crop.ts) and the export (FFmpeg crop ->
+ * scale/pad) derive from the same geometry, so they always match.
+ */
+export interface ClipCrop {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/**
  * A trimmed segment of a source video placed on the main timeline.
  * The visible/used length on the timeline is `outPoint - inPoint`.
  */
@@ -197,6 +212,8 @@ export interface Clip {
   transitionAfter?: ClipTransition;
   /** Stacked trending effects (stage 8), rendered in canonical order. */
   effects: ClipEffect[];
+  /** Crop / reframe rectangle (undefined = whole frame). */
+  crop?: ClipCrop;
 }
 
 /**

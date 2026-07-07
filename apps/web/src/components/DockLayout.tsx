@@ -20,6 +20,7 @@ import { PreviewArea } from './PreviewArea';
 import { TimelineArea } from './TimelineArea';
 import { TextEditorPanel } from './TextEditorPanel';
 import { EffectsPanel } from './EffectsPanel';
+import { CropPanel } from './CropPanel';
 import { AudioPanel } from './AudioPanel';
 import { TransitionPanel } from './TransitionPanel';
 import { FramePanel } from './FramePanel';
@@ -107,6 +108,20 @@ function EffectsDock() {
   );
 }
 
+function CropDock() {
+  const hasSelection = useEditorStore((s) =>
+    s.clips.some((c) => c.id === s.selectedItemId),
+  );
+  if (!hasSelection) {
+    return <Placeholder>Select a clip on the timeline to crop / reframe it.</Placeholder>;
+  }
+  return (
+    <div className="dock-body dock-body--scroll">
+      <CropPanel />
+    </div>
+  );
+}
+
 function AudioDock() {
   const hasSelection = useEditorStore((s) =>
     s.audioTracks.some((a) => a.id === s.selectedItemId),
@@ -181,18 +196,23 @@ function ExportDock() {
 }
 
 // Stable module-level map: Dockview re-mounts panels if this object identity
-// changes between renders.
-const components: IDockviewReactProps['components'] = {
+// changes between renders. Also reused by the mobile shell (MobileLayout),
+// whose bottom sheets render the same panel contents — including the
+// same-store selection checks and placeholders.
+export const DOCK_CONTENT = {
   preview: PreviewDock,
   timeline: TimelineDock,
   media: MediaDock,
   text: TextDock,
   effects: EffectsDock,
+  crop: CropDock,
   audio: AudioDock,
   transition: TransitionDock,
   frame: FrameDock,
   export: ExportDock,
 };
+
+const components: IDockviewReactProps['components'] = DOCK_CONTENT;
 
 export interface DockPanelDef {
   id: string;
@@ -239,6 +259,16 @@ export const DOCK_PANELS: DockPanelDef[] = [
     title: 'Effects',
     referencePanel: 'preview',
     referenceDirection: 'right',
+    gridDirection: 'right',
+    initialWidth: 300,
+    minimumWidth: 220,
+    minimumHeight: 120,
+  },
+  {
+    id: 'crop',
+    title: 'Crop',
+    referencePanel: 'effects',
+    referenceDirection: 'within',
     gridDirection: 'right',
     initialWidth: 300,
     minimumWidth: 220,

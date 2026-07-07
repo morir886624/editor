@@ -8,6 +8,25 @@
       content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     />
     <title>Video Editor</title>
+    <!-- Set the theme before first paint so there's no dark→light flash.
+         Mirrors themeStore's resolution (saved choice → OS preference → dark). -->
+    <script>
+      (function () {
+        try {
+          var saved = localStorage.getItem('editor-theme');
+          var theme =
+            saved === 'light' || saved === 'dark'
+              ? saved
+              : window.matchMedia &&
+                  window.matchMedia('(prefers-color-scheme: light)').matches
+                ? 'light'
+                : 'dark';
+          document.documentElement.setAttribute('data-theme', theme);
+        } catch (e) {
+          document.documentElement.setAttribute('data-theme', 'dark');
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

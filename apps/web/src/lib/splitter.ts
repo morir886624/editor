@@ -54,6 +54,10 @@ export interface SplitProgress {
 const MOUNT_DIR = '/split-src';
 const sec = (n: number) => Math.max(0, n).toFixed(3);
 
+/** A recut ending within this margin of the source's end runs to EOF instead
+ *  of using -t, so float noise in a "cut to the end" never drops the tail. */
+const EOF_MARGIN = 0.25;
+
 const fileExt = (name: string): string => {
   const m = /\.([a-z0-9]{2,4})$/i.exec(name);
   return m ? m[1].toLowerCase() : 'mp4';
@@ -69,6 +73,90 @@ const toArrayBuffer = (data: Uint8Array): ArrayBuffer =>
 export function planSegmentCount(duration: number, segmentLength: number): number {
   if (duration <= 0 || segmentLength <= 0) return 0;
   return Math.max(1, Math.ceil((duration - 0.5) / segmentLength));
+}
+
+/**
+ * Re-cut ONE segment of `file` to a user-chosen [start, end] window — the
+ * "adjust the framing" flow: the auto-split cuts blindly (often mid-sentence),
+ * so the user browses the ORIGINAL video, picks better bounds, and this
+ * replaces the segment. Same speed/precision tradeoff as runSplit (`-c copy`,
+ * keyframe-snapped start), same memory strategy (WORKERFS mount, one output
+ * in MEMFS at a time). Returns the replacement SplitSegment (same index and
+ * filename as the segment it replaces).
+ */
+export async function recutSegment(
+  file: File,
+  sourceDuration: number,
+  start: number,
+  end: number,
+  index: number,
+  filename: string,
+  token: CancelToken,
+  onProgress?: (fraction: number) => void,
+): Promise<SplitSegment> {
+  if (!(end > start)) throw new Error('The end of a short must come after its start.');
+
+  const src = `${MOUNT_DIR}/input.${fileExt(file.name)}`;
+  const runsToEof = end >= sourceDuration - EOF_MARGIN;
+  const expectedOutSec = Math.max(0.5, end - start);
+
+  return runExclusive(async () => {
+    const ffmpeg = await loadFFmpeg();
+    if (token.cancelled) throw new SplitCancelledError();
+
+    const onFFmpegProgress = ({ time }: { progress: number; time: number }) =>
+      onProgress?.(Math.min(1, Math.max(0, time / 1e6 / expectedOutSec)));
+    ffmpeg.on('progress', onFFmpegProgress);
+
+    let mounted = false;
+    try {
+      await ffmpeg.createDir(MOUNT_DIR);
+      await ffmpeg.mount(
+        FFFSType.WORKERFS,
+        { blobs: [{ name: `input.${fileExt(file.name)}`, data: file }] },
+        MOUNT_DIR,
+      );
+      mounted = true;
+
+      const out = 'recut.mp4';
+      const args = ['-ss', sec(start)];
+      if (!runsToEof) args.push('-t', sec(end - start));
+      args.push(
+        '-i', src,
+        '-c', 'copy',
+        '-avoid_negative_ts', 'make_zero',
+        '-movflags', '+faststart',
+        out,
+      );
+      const ret = await ffmpeg.exec(args);
+      if (token.cancelled) throw new SplitCancelledError();
+      if (ret !== 0) throw new Error('Re-cutting this short failed.');
+
+      const data = (await ffmpeg.readFile(out)) as Uint8Array;
+      await ffmpeg.deleteFile(out);
+      const segFile = new File([toArrayBuffer(data)], filename, { type: 'video/mp4' });
+      const meta = await readVideoMeta(segFile);
+      return {
+        index,
+        filename,
+        file: segFile,
+        url: meta.url,
+        sizeBytes: segFile.size,
+        duration: meta.duration,
+        requestedStart: start,
+      };
+    } finally {
+      ffmpeg.off('progress', onFFmpegProgress);
+      if (!token.cancelled && mounted) {
+        try {
+          await ffmpeg.unmount(MOUNT_DIR);
+          await ffmpeg.deleteDir(MOUNT_DIR);
+        } catch {
+          /* best-effort */
+        }
+      }
+    }
+  });
 }
 
 /**

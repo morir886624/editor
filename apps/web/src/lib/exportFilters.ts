@@ -13,7 +13,13 @@
 // to yuv<->rgb conversion rounding.
 // ---------------------------------------------------------------------------
 
-import type { AspectRatio, ExportResolution, FrameSettings, TransitionType } from '../types';
+import type {
+  AspectRatio,
+  ClipCrop,
+  ExportResolution,
+  FrameSettings,
+  TransitionType,
+} from '../types';
 import type { ColorOp } from './effects';
 import { BLUR_DIM, BLUR_RADIUS_PCT, BLUR_ZOOM, frameLayout } from './frame';
 
@@ -128,6 +134,24 @@ export function colorOpFilters(ops: ColorOp[]): string[] {
         return channelMixer(hueRotateMatrix(op.degrees));
     }
   });
+}
+
+// ---- crop --------------------------------------------------------------------
+
+/**
+ * FFmpeg crop for a stored frame-relative crop rect (fractions of the source,
+ * see ClipCrop). Every term rounds DOWN to even pixels so yuv420p chroma stays
+ * aligned; flooring each term independently keeps x+w / y+h inside the source
+ * (each value only shrinks). Runs BEFORE the contain-scale/pad, so the crop
+ * region ends up contain-fitted — the same geometry computeCropLayout() gives
+ * the preview.
+ */
+export function cropFilter(c: ClipCrop): string {
+  const evenExpr = (expr: string) => `floor(${expr}/2)*2`;
+  return (
+    `crop=w=${evenExpr(`iw*${f6(c.w)}`)}:h=${evenExpr(`ih*${f6(c.h)}`)}` +
+    `:x=${evenExpr(`iw*${f6(c.x)}`)}:y=${evenExpr(`ih*${f6(c.y)}`)}`
+  );
 }
 
 // ---- decorative frame (stage 9A) ---------------------------------------------

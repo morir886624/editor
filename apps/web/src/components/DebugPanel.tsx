@@ -1,5 +1,6 @@
 import { useEditorStore } from '../store/editorStore';
 import { useFFmpegStore } from '../store/ffmpegStore';
+import { useDebugStore } from '../store/debugStore';
 import { useDraggablePanel } from '../lib/useDraggablePanel';
 import {
   MAX_TIMELINE_DURATION,
@@ -29,23 +30,38 @@ export function DebugPanel() {
   const setPlayhead = useEditorStore((s) => s.setPlayhead);
   const undo = useEditorStore((s) => s.undo);
   const redo = useEditorStore((s) => s.redo);
+  const open = useDebugStore((s) => s.open);
+  const setOpen = useDebugStore((s) => s.setOpen);
   const { ref, onHeaderPointerDown } = useDraggablePanel<HTMLElement>('debug');
 
   // Computed via the same function the guard uses — they can never disagree.
   const total = computeTotalDuration(clips);
   const remaining = remainingDuration(clips);
 
+  if (!open) return null;
+
   return (
     <aside ref={ref} className="debug" aria-label="Debug panel">
       <header className="debug__header" onPointerDown={onHeaderPointerDown}>
         <strong>Store debug</strong>
-        <span
-          className={
-            'debug__badge' +
-            (total > MAX_TIMELINE_DURATION ? ' debug__badge--over' : '')
-          }
-        >
-          {total.toFixed(1)}s / {MAX_TIMELINE_DURATION}s
+        <span className="debug__header-right">
+          <span
+            className={
+              'debug__badge' +
+              (total > MAX_TIMELINE_DURATION ? ' debug__badge--over' : '')
+            }
+          >
+            {total.toFixed(1)}s / {MAX_TIMELINE_DURATION}s
+          </span>
+          <button
+            type="button"
+            className="debug__close"
+            title="Close debug panel"
+            aria-label="Close debug panel"
+            onClick={() => setOpen(false)}
+          >
+            ✕
+          </button>
         </span>
       </header>
 

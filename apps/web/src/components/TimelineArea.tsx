@@ -188,6 +188,12 @@ export function TimelineArea() {
   // (clips stop propagation), so this only fires off-clip. Pauses playback so
   // scrubbing doesn't fight the rAF loop.
   const beginScrub = (e: ReactPointerEvent<HTMLDivElement>) => {
+    // On touch, only the ruler scrubs (it has touch-action: none); a finger on
+    // the tracks pans the timeline's horizontal scroll instead — otherwise
+    // every scroll attempt would also jump the playhead.
+    if (e.pointerType === 'touch' && !(e.target as HTMLElement).closest('.timeline__ruler')) {
+      return;
+    }
     const rect = e.currentTarget.getBoundingClientRect();
     const totalDur = computeTotalDuration(clips);
     const seek = (clientX: number) =>
@@ -203,6 +209,24 @@ export function TimelineArea() {
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
+  };
+
+  // Slip edit: slide the selected clip's [inPoint, outPoint] window over its
+  // source WITHOUT changing its length — the rescue tool when an auto-cut
+  // short starts/ends mid-sentence and the source holds margin around the cut.
+  const selectedClip = clips.find((c) => c.id === selectedItemId);
+  const canSlipLeft = !!selectedClip && selectedClip.inPoint > 0.001;
+  const canSlipRight =
+    !!selectedClip && selectedClip.outPoint < selectedClip.sourceDuration - 0.001;
+  const slipClip = (dir: 1 | -1) => {
+    const c = selectedClip;
+    if (!c) return;
+    // One source-second per click, clamped to the media's edges. Length is
+    // unchanged, so the 60s guard can never reject this.
+    const shift = clamp(dir, -c.inPoint, c.sourceDuration - c.outPoint);
+    if (Math.abs(shift) < 1e-6) return;
+    const res = updateClipTrim(c.id, c.inPoint + shift, c.outPoint + shift);
+    if (!res.ok) notify({ type: 'error', message: res.reason });
   };
 
   const counterClass =
@@ -228,6 +252,33 @@ export function TimelineArea() {
         {ffmpegStatus === 'error' && (
           <span className="timeline__engine timeline__engine--error">
             Video engine failed to load
+          </span>
+        )}
+
+        {selectedClip && (
+          <span
+            className="timeline__slip"
+            title="Slide the cut window over the source video — same length, earlier or later content. Rescues a cut that lands mid-sentence."
+          >
+            <button
+              type="button"
+              className="timeline__slipbtn"
+              onClick={() => slipClip(-1)}
+              disabled={!canSlipLeft}
+              title="Slide the cut 1s earlier in the source"
+            >
+              ‹
+            </button>
+            <span className="timeline__sliplabel">Slide cut</span>
+            <button
+              type="button"
+              className="timeline__slipbtn"
+              onClick={() => slipClip(1)}
+              disabled={!canSlipRight}
+              title="Slide the cut 1s later in the source"
+            >
+              ›
+            </button>
           </span>
         )}
       </div>

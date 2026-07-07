@@ -30,8 +30,10 @@ import {
 } from '../lib/videoEffects';
 import { useAudioMixer } from '../lib/useAudioMixer';
 import { BLUR_DIM, BLUR_ZOOM, aspectDims, frameBackgroundUrl, frameLayout } from '../lib/frame';
+import { FULL_CROP, computeCropLayout } from '../lib/crop';
+import { CropOverlay } from './CropOverlay';
 import { formatTime, formatTimecode } from '../lib/timeline';
-import type { AspectRatio, Clip, TextOverlay } from '../types';
+import type { AspectRatio, Clip, ClipCrop, TextOverlay } from '../types';
 
 const ASPECT_CSS: Record<AspectRatio, string> = {
   '9:16': '9 / 16',
@@ -67,7 +69,11 @@ const BLUR_BACKING_SHORT = 96;
  * canvas plus the blur + dim the export's boxblur graph applies (preview-grade
  * match — CSS gaussian vs FFmpeg boxblur, like the temperature mapping).
  */
-function paintBlurBackdrop(canvas: HTMLCanvasElement, video: HTMLVideoElement) {
+function paintBlurBackdrop(
+  canvas: HTMLCanvasElement,
+  video: HTMLVideoElement,
+  crop: ClipCrop | undefined,
+) {
   const ctx = canvas.getContext('2d');
   const vw = video.videoWidth;
   const vh = video.videoHeight;
@@ -75,13 +81,24 @@ function paintBlurBackdrop(canvas: HTMLCanvasElement, video: HTMLVideoElement) {
   const cw = canvas.width;
   const ch = canvas.height;
   const targetAR = cw / ch;
-  let sw = vw;
-  let sh = vh;
-  if (vw / vh > targetAR) sw = vh * targetAR;
-  else sh = vw / targetAR;
+  // Sample inside the clip's crop rect (the export blurs the already-cropped
+  // joined video), cover-fitting that region to the canvas aspect.
+  const c = crop ?? FULL_CROP;
+  const rx = c.x * vw;
+  const ry = c.y * vh;
+  const rw = c.w * vw;
+  const rh = c.h * vh;
+  let sw = rw;
+  let sh = rh;
+  if (rw / rh > targetAR) sw = rh * targetAR;
+  else sh = rw / targetAR;
   const dw = cw * BLUR_ZOOM;
   const dh = ch * BLUR_ZOOM;
-  ctx.drawImage(video, (vw - sw) / 2, (vh - sh) / 2, sw, sh, (cw - dw) / 2, (ch - dh) / 2, dw, dh);
+  ctx.drawImage(
+    video,
+    rx + (rw - sw) / 2, ry + (rh - sh) / 2, sw, sh,
+    (cw - dw) / 2, (ch - dh) / 2, dw, dh,
+  );
   const grade = video.style.filter && video.style.filter !== 'none' ? `${video.style.filter} ` : '';
   canvas.style.filter = `${grade}blur(1.6cqmin) brightness(${BLUR_DIM})`;
 }
@@ -111,6 +128,7 @@ export function PreviewPlayer() {
   const frame = useEditorStore((s) => s.settings.frame);
   const textOverlays = useEditorStore((s) => s.textOverlays);
   const selectedItemId = useEditorStore((s) => s.selectedItemId);
+  const cropEditingClipId = useEditorStore((s) => s.cropEditingClipId);
   const setPlayhead = useEditorStore((s) => s.setPlayhead);
   const setPlaying = useEditorStore((s) => s.setPlaying);
   const setSelected = useEditorStore((s) => s.setSelected);
@@ -125,6 +143,7 @@ export function PreviewPlayer() {
   const videoB = useRef<HTMLVideoElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
   // Overlay layers for the stage-8 effects (vignette / grain / flash),
   // written imperatively per frame by applyBlend.
   const fxVignetteRef = useRef<HTMLDivElement>(null);
@@ -158,18 +177,56 @@ export function PreviewPlayer() {
     };
   }, [aspectRatio]);
 
+  // Width/height ratio of the video viewport (frame rectangle within the
+  // project aspect) — analytic, so crop layout percentages survive resizes.
+  const viewportAspect = useMemo(() => {
+    const d = aspectDims(aspectRatio);
+    return (frameRect.w * d.w) / (frameRect.h * d.h);
+  }, [frameRect, aspectRatio]);
+
   const elAt = (i: number) => (i === 0 ? videoA.current : videoB.current);
 
-  // Each element carries the CSS filter of the clip IT displays (set in
-  // prepare(); during a transition blend the two clips can differ). This
-  // effect re-derives both when effect params change mid-display.
+  /**
+   * Lay the <video> out inside its viewport-sized wrapper so that exactly the
+   * clip's crop region shows, contain-fitted — the same geometry the export's
+   * crop -> scale/pad produces. While the clip is open in the crop editor the
+   * FULL source shows instead (the CropOverlay draws the rect on top of it).
+   * Needs metadata (videoWidth): prepare() calls this after ensureLoaded, and
+   * the [clips] effect below re-derives it on live crop/aspect/frame edits.
+   */
+  const applyCropLayout = (el: HTMLVideoElement, clip: Clip) => {
+    if (!el.videoWidth || !el.videoHeight) return;
+    const state = useEditorStore.getState();
+    const crop = state.cropEditingClipId === clip.id ? undefined : clip.crop;
+    const fr = frameLayout(state.settings.frame, state.settings.aspectRatio);
+    const d = aspectDims(state.settings.aspectRatio);
+    const layout = computeCropLayout(
+      crop,
+      el.videoWidth / el.videoHeight,
+      (fr.w * d.w) / (fr.h * d.h),
+    );
+    el.style.left = `${layout.left * 100}%`;
+    el.style.top = `${layout.top * 100}%`;
+    el.style.width = `${layout.w * 100}%`;
+    el.style.height = `${layout.h * 100}%`;
+    el.style.objectFit = 'fill'; // element spans the full source; no letterbox
+    el.style.clipPath = layout.clipPath;
+  };
+
+  // Each element carries the CSS filter + crop layout of the clip IT displays
+  // (set in prepare(); during a transition blend the two clips can differ).
+  // This effect re-derives both when effect/crop params change mid-display,
+  // and when the viewport geometry (aspect, frame, crop session) changes.
   useEffect(() => {
     for (const el of [videoA.current, videoB.current]) {
       if (!el?.dataset.clipId) continue;
       const clip = clips.find((c) => c.id === el.dataset.clipId);
-      if (clip) el.style.filter = buildClipFilter(clip);
+      if (!clip) continue;
+      el.style.filter = buildClipFilter(clip);
+      applyCropLayout(el, clip);
     }
-  }, [clips]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clips, aspectRatio, frame, cropEditingClipId]);
 
   // Keep a ref copy of isPlaying for async callbacks / the seek effect.
   useEffect(() => {
@@ -217,6 +274,7 @@ export function PreviewPlayer() {
     el.playbackRate = clip.speed;
     el.style.filter = buildClipFilter(clip);
     await ensureLoaded(el, clip);
+    applyCropLayout(el, clip); // metadata is in — position the crop region
     await seekEl(el, sourceTime);
   };
 
@@ -226,16 +284,22 @@ export function PreviewPlayer() {
   // Inline styles are authoritative: outside a transition the idle element is
   // re-hidden here (overriding the --idle class either way).
 
+  // Opacity/transform/z go on the video's WRAPPER (.preview__layer), which is
+  // always viewport-sized — so a transition's translate/scale percentages mean
+  // "of the output frame" even when the cropped <video> inside is laid out
+  // larger than the viewport. Volume stays on the element itself.
   const setLayer = (
     el: HTMLVideoElement,
     layer: TransitionLayerStyle,
     z: number,
     fxTransform = '',
   ) => {
-    el.style.opacity = String(layer.opacity);
+    const box = el.parentElement;
+    if (!box) return;
+    box.style.opacity = String(layer.opacity);
     const base = layer.transform === 'none' ? '' : layer.transform;
-    el.style.transform = [base, fxTransform].filter(Boolean).join(' ') || 'none';
-    el.style.zIndex = String(z);
+    box.style.transform = [base, fxTransform].filter(Boolean).join(' ') || 'none';
+    box.style.zIndex = String(z);
   };
 
   const applyBlend = () => {
@@ -304,7 +368,7 @@ export function PreviewPlayer() {
     const backdrop = frameBlurRef.current;
     if (backdrop && state.settings.frame.type === 'blur' && loc) {
       const srcEl = els.find((el) => el?.dataset.clipId === loc.clip.id);
-      if (srcEl && srcEl.readyState >= 2) paintBlurBackdrop(backdrop, srcEl);
+      if (srcEl && srcEl.readyState >= 2) paintBlurBackdrop(backdrop, srcEl, loc.clip.crop);
     }
   };
 
@@ -547,6 +611,13 @@ export function PreviewPlayer() {
     setPlaying(false);
     setPlayhead(0);
   };
+  // Transport step: pause, then nudge the playhead — reads fresh state so a
+  // click during playback can't act on a stale rAF-era playhead.
+  const stepBy = (delta: number) => {
+    const s = useEditorStore.getState();
+    s.setPlaying(false);
+    s.setPlayhead(clamp(s.playheadTime + delta, 0, totalTimelineDuration(s.clips)));
+  };
   const blurThen = (fn: () => void) => (e: ReactMouseEvent<HTMLButtonElement>) => {
     e.currentTarget.blur(); // return focus to body so Space toggles play, not the button
     fn();
@@ -737,6 +808,7 @@ export function PreviewPlayer() {
               round in cqmin (= % of the frame's short side — the same unit
               the export mask uses). Full-bleed when the frame type is none. */}
           <div
+            ref={viewportRef}
             className="frame-viewport"
             style={{
               left: `${frameRect.x * 100}%`,
@@ -746,18 +818,15 @@ export function PreviewPlayer() {
               borderRadius: frameRect.radiusPct > 0 ? `${frameRect.radiusPct}cqmin` : '0',
             }}
           >
-            <video
-              ref={videoA}
-              className={'preview__video' + (activeIndex === 0 ? '' : ' preview__video--idle')}
-              playsInline
-              preload="auto"
-            />
-            <video
-              ref={videoB}
-              className={'preview__video' + (activeIndex === 1 ? '' : ' preview__video--idle')}
-              playsInline
-              preload="auto"
-            />
+            {/* Each video sits in a viewport-sized wrapper: transitions and
+                effect transforms style the WRAPPER (setLayer), while the
+                element inside carries the clip's crop layout + CSS filter. */}
+            <div className={'preview__layer' + (activeIndex === 0 ? '' : ' preview__layer--idle')}>
+              <video ref={videoA} className="preview__video" playsInline preload="auto" />
+            </div>
+            <div className={'preview__layer' + (activeIndex === 1 ? '' : ' preview__layer--idle')}>
+              <video ref={videoB} className="preview__video" playsInline preload="auto" />
+            </div>
 
             {/* Stage-8 effect layers, above the videos and below the text.
                 Opacity/position are driven per frame by applyBlend. They live
@@ -766,6 +835,20 @@ export function PreviewPlayer() {
             <div ref={fxVignetteRef} className="fx-layer fx-layer--vignette" aria-hidden="true" />
             <div ref={fxGrainRef} className="fx-layer fx-layer--grain" aria-hidden="true" />
             <div ref={fxFlashRef} className="fx-layer fx-layer--flash" aria-hidden="true" />
+
+            {/* Crop editor: interactive rect over the (uncropped) source,
+                shown only while its clip is the one under the playhead. */}
+            {(() => {
+              const cropClip = clips.find((c) => c.id === cropEditingClipId);
+              if (!cropClip || locate(clips, playheadTime)?.clip.id !== cropClip.id) return null;
+              return (
+                <CropOverlay
+                  clip={cropClip}
+                  viewportAspect={viewportAspect}
+                  viewportRef={viewportRef}
+                />
+              );
+            })()}
           </div>
 
           {/* Overlay layer: container ignores pointer events so it doesn't
@@ -866,11 +949,27 @@ export function PreviewPlayer() {
           </button>
           <button
             type="button"
+            className="player__btn"
+            onClick={blurThen(() => stepBy(-1))}
+            title="Step back 1s"
+          >
+            ‹
+          </button>
+          <button
+            type="button"
             className="player__btn player__btn--play"
             onClick={blurThen(togglePlay)}
             title={isPlaying ? 'Pause (space)' : 'Play (space)'}
           >
             {isPlaying ? '❚❚' : '▶'}
+          </button>
+          <button
+            type="button"
+            className="player__btn"
+            onClick={blurThen(() => stepBy(1))}
+            title="Step forward 1s"
+          >
+            ›
           </button>
           <span className="player__time">
             {formatTimecode(playheadTime)} <span className="player__time-dim">/ {formatTime(total)}</span>

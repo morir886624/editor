@@ -5,6 +5,8 @@ import { useEditorStore } from '../store/editorStore';
 import { useExportStore } from '../store/exportStore';
 import { useSplitStore } from '../store/splitStore';
 import { useDockStore } from '../store/dockStore';
+import { useThemeStore } from '../store/themeStore';
+import { useDebugStore } from '../store/debugStore';
 import { DOCK_PANELS, buildDefaultLayout, openDockPanel, toggleDockPanel } from './DockLayout';
 
 /**
@@ -29,6 +31,10 @@ export function Toolbar() {
   const openSplit = useSplitStore((s) => s.open);
   const dockApi = useDockStore((s) => s.api);
   const openPanelIds = useDockStore((s) => s.openPanelIds);
+  const theme = useThemeStore((s) => s.theme);
+  const toggleTheme = useThemeStore((s) => s.toggleTheme);
+  const debugOpen = useDebugStore((s) => s.open);
+  const toggleDebug = useDebugStore((s) => s.toggle);
 
   // Panels dropdown: fixed-position so the toolbar's overflow-x can't clip it.
   const panelsBtnRef = useRef<HTMLButtonElement>(null);
@@ -53,6 +59,12 @@ export function Toolbar() {
 
   return (
     <nav className="toolbar" aria-label="Tools">
+      <span className="toolbar__brand">
+        <span className="toolbar__brand-mark" aria-hidden="true">Ed</span>
+        Editor
+      </span>
+      <span className="toolbar__sep" aria-hidden="true" />
+
       <button
         type="button"
         className="toolbar__btn toolbar__btn--active"
@@ -123,21 +135,23 @@ export function Toolbar() {
         Clips
       </button>
 
-      <button
-        type="button"
-        className="toolbar__btn toolbar__btn--active"
-        onClick={openExport}
-        disabled={!hasClips}
-        title={hasClips ? 'Export the project as MP4' : 'Import a clip first'}
-      >
-        Export
-      </button>
-
       {DISABLED_TOOLS.map((label) => (
         <button key={label} type="button" className="toolbar__btn" disabled>
           {label}
         </button>
       ))}
+
+      <span className="toolbar__spacer" aria-hidden="true" />
+
+      <button
+        type="button"
+        className="toolbar__btn toolbar__btn--active toolbar__btn--icon"
+        onClick={toggleTheme}
+        title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+        aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+      >
+        {theme === 'dark' ? '☀' : '☾'}
+      </button>
 
       <button
         ref={panelsBtnRef}
@@ -147,6 +161,16 @@ export function Toolbar() {
         title="Show or hide workspace panels"
       >
         Panels ▾
+      </button>
+
+      <button
+        type="button"
+        className="toolbar__btn toolbar__btn--active toolbar__btn--primary"
+        onClick={openExport}
+        disabled={!hasClips}
+        title={hasClips ? 'Export the project as MP4' : 'Import a clip first'}
+      >
+        Export
       </button>
 
       {panelsMenuPos && (
@@ -174,6 +198,17 @@ export function Toolbar() {
                 </button>
               );
             })}
+            <div className="panelmenu__sep" />
+            <button
+              type="button"
+              className="panelmenu__item"
+              role="menuitemcheckbox"
+              aria-checked={debugOpen}
+              onClick={toggleDebug}
+            >
+              <span className="panelmenu__check">{debugOpen ? '✓' : ''}</span>
+              Store debug
+            </button>
             <div className="panelmenu__sep" />
             <button
               type="button"
