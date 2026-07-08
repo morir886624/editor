@@ -3,8 +3,9 @@
   "private": true,
   "packageManager": "pnpm@11.10.0",
   "scripts": {
+    "postinstall": "node scripts/fix-turbo-perms.mjs",
     "dev": "turbo run dev",
-    "build": "turbo run build",
+    "build": "node scripts/fix-turbo-perms.mjs && turbo run build",
     "lint": "turbo run lint",
     "preview": "turbo run preview",
     "format": "prettier --write .",
