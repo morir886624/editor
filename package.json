@@ -13,6 +13,7 @@
   },
   "prettier": "@editor/config/prettier",
   "devDependencies": {
+    "pnpm": "11.10.0",
     "prettier": "^3.6.2",
     "turbo": "^2.5.8"
   }
