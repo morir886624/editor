@@ -26,6 +26,7 @@ Options -Indexes
   AddType application/wasm            .wasm
   AddType font/woff2                  .woff2
   AddType image/svg+xml               .svg
+  AddType application/manifest+json   .webmanifest
 </IfModule>
 
 # IMPORTANT: do NOT add Cross-Origin-Embedder-Policy / -Opener-Policy here.

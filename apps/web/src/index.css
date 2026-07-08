@@ -1171,6 +1171,86 @@ canvas.frame-bg {
   border-left-color: var(--danger);
 }
 
+/* ---- install banner (PWA) ----------------------------------------------- */
+
+.install-banner {
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  z-index: 110; /* above notices */
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: max-content;
+  max-width: calc(100vw - 24px);
+  padding: 10px 10px 10px 14px;
+  color: var(--text);
+  background: var(--surface-overlay);
+  backdrop-filter: blur(4px);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  border-radius: 8px;
+  box-shadow: var(--shadow-lg);
+}
+
+.install-banner__icon {
+  flex: none;
+}
+
+.install-banner__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.install-banner__title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.install-banner__text {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.install-banner__action {
+  flex: none;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.install-banner__action:hover {
+  filter: brightness(1.1);
+}
+
+.install-banner__close {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--text-dim);
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.install-banner__close:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
 /* ---- text editor panel -------------------------------------------------- */
 
 .texted {

@@ -8,6 +8,14 @@
       content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     />
     <title>Video Editor</title>
+    <!-- PWA: makes the app installable to the home screen / desktop. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#863bff" />
+    <!-- iOS has no install prompt; these enable Add-to-Home-Screen standalone. -->
+    <link rel="apple-touch-icon" href="/favicon.svg" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Video Editor" />
     <!-- Set the theme before first paint so there's no dark→light flash.
          Mirrors themeStore's resolution (saved choice → OS preference → dark). -->
     <script>

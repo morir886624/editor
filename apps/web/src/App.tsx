@@ -3,6 +3,7 @@ import { DockLayout } from './components/DockLayout';
 import { MobileLayout } from './components/MobileLayout';
 import { DebugPanel } from './components/DebugPanel';
 import { NoticeHost } from './components/NoticeHost';
+import { InstallPrompt } from './components/InstallPrompt';
 import { ExportDialog } from './components/ExportDialog';
 import { SplitDialog } from './components/SplitDialog';
 import { useOverlayHotkeys } from './lib/useOverlayHotkeys';
@@ -36,6 +37,7 @@ export default function App() {
         </>
       )}
       <NoticeHost />
+      <InstallPrompt />
       <ExportDialog />
       <SplitDialog />
     </div>

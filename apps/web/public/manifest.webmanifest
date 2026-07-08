@@ -1,0 +1,19 @@
+{
+  "name": "Video Editor",
+  "short_name": "Editor",
+  "description": "Éditeur vidéo mobile : découpez une longue vidéo en shorts de 60 s et finalisez-les.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#161616",
+  "theme_color": "#863bff",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
