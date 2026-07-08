@@ -4,6 +4,7 @@ import { useImportAudio } from '../lib/useImportAudio';
 import { useEditorStore } from '../store/editorStore';
 import { useExportStore } from '../store/exportStore';
 import { useSplitStore } from '../store/splitStore';
+import { useNoticeStore } from '../store/noticeStore';
 import { useDockStore } from '../store/dockStore';
 import { useThemeStore } from '../store/themeStore';
 import { useDebugStore } from '../store/debugStore';
@@ -11,13 +12,11 @@ import { DOCK_PANELS, buildDefaultLayout, openDockPanel, toggleDockPanel } from 
 
 /**
  * Middle zone. Import (Stage 2), Text (Stage 4), Audio (Stage 5), Export
- * (Stage 6) and Shorts (stage 7 — batch-split a long video) are enabled;
- * Split (cut a clip at the playhead) was never built (out of scope).
+ * (Stage 6), Shorts (stage 7 — batch-split a long video) and Split (cut the
+ * clip under the playhead into two) are enabled.
  * Panels is the window menu of the dockable workspace: check = open (click
  * closes), uncheck = closed (click reopens next to its usual neighbors).
  */
-const DISABLED_TOOLS = ['Split'] as const;
-
 export function Toolbar() {
   const { importFiles, importing } = useImportClips();
   const { importAudioFiles, importingAudio } = useImportAudio();
@@ -27,6 +26,8 @@ export function Toolbar() {
   const hasClips = useEditorStore((s) => s.clips.length > 0);
   const addTextOverlay = useEditorStore((s) => s.addTextOverlay);
   const setSelected = useEditorStore((s) => s.setSelected);
+  const splitClip = useEditorStore((s) => s.splitClip);
+  const pushNotice = useNoticeStore((s) => s.push);
   const openExport = useExportStore((s) => s.open);
   const openSplit = useSplitStore((s) => s.open);
   const dockApi = useDockStore((s) => s.api);
@@ -55,6 +56,12 @@ export function Toolbar() {
   const addText = () => {
     const id = addTextOverlay(); // at the current playhead, default 3s
     setSelected(id);
+  };
+
+  const onSplit = () => {
+    // Read the playhead lazily so the toolbar doesn't re-render every frame.
+    const res = splitClip(useEditorStore.getState().playheadTime);
+    if (!res.ok) pushNotice({ type: 'error', message: res.reason });
   };
 
   return (
@@ -135,11 +142,15 @@ export function Toolbar() {
         Clips
       </button>
 
-      {DISABLED_TOOLS.map((label) => (
-        <button key={label} type="button" className="toolbar__btn" disabled>
-          {label}
-        </button>
-      ))}
+      <button
+        type="button"
+        className="toolbar__btn toolbar__btn--active"
+        onClick={onSplit}
+        disabled={!hasClips}
+        title={hasClips ? 'Split the clip at the playhead' : 'Import a clip first'}
+      >
+        Split
+      </button>
 
       <span className="toolbar__spacer" aria-hidden="true" />
 

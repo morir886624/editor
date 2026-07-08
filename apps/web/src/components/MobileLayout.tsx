@@ -5,6 +5,7 @@ import { DOCK_CONTENT } from './DockLayout';
 import { useEditorStore } from '../store/editorStore';
 import { useExportStore } from '../store/exportStore';
 import { useSplitStore } from '../store/splitStore';
+import { useNoticeStore } from '../store/noticeStore';
 import { useThemeStore } from '../store/themeStore';
 import { useImportClips } from '../lib/useImportClips';
 import { useImportAudio } from '../lib/useImportAudio';
@@ -46,6 +47,8 @@ export function MobileLayout() {
   const redo = useEditorStore((s) => s.redo);
   const addTextOverlay = useEditorStore((s) => s.addTextOverlay);
   const setSelected = useEditorStore((s) => s.setSelected);
+  const splitClip = useEditorStore((s) => s.splitClip);
+  const pushNotice = useNoticeStore((s) => s.push);
   const textSelected = useEditorStore((s) =>
     s.textOverlays.some((o) => o.id === s.selectedItemId),
   );
@@ -78,6 +81,12 @@ export function MobileLayout() {
     // Selected track → its inspector; nothing selected → pick a music file.
     if (audioSelected) setSheet('audio');
     else audioInputRef.current?.click();
+  };
+
+  const onSplit = () => {
+    // Read the playhead lazily so the shell doesn't re-render every frame.
+    const res = splitClip(useEditorStore.getState().playheadTime);
+    if (!res.ok) pushNotice({ type: 'error', message: res.reason });
   };
 
   const SheetContent = sheet ? DOCK_CONTENT[sheet] : null;
@@ -165,6 +174,12 @@ export function MobileLayout() {
             🎞
           </span>
           Clips
+        </button>
+        <button type="button" className="mtool" onClick={onSplit} disabled={!hasClips}>
+          <span className="mtool__icon" aria-hidden="true">
+            ✂
+          </span>
+          Split
         </button>
         <button type="button" className="mtool" onClick={onText} disabled={!hasClips}>
           <span className="mtool__icon" aria-hidden="true">

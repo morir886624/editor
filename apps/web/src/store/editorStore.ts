@@ -36,6 +36,7 @@ import {
   exceedsMax,
   sequenceClips,
 } from '../lib/duration';
+import { locate } from '../lib/playback';
 import { DEFAULT_ADJUSTMENTS } from '../lib/effects';
 import { clampCrop } from '../lib/crop';
 import { DEFAULT_FRAME } from '../lib/frame';
@@ -70,6 +71,31 @@ const HISTORY_LIMIT = 100;
 let idCounter = 0;
 const uid = (prefix: string): string =>
   `${prefix}_${Date.now().toString(36)}_${(idCounter++).toString(36)}`;
+
+/**
+ * Re-window a clip's stacked effects for one half of a split, where `leftDur`
+ * is the left half's timeline duration (seconds). Effect windows are in the
+ * clip's own timeline seconds (see ClipEffect), so:
+ *  - the LEFT half keeps them unchanged — effects starting past `leftDur`
+ *    become inert via the read-time clamp in effectWindow();
+ *  - the RIGHT half drops effects that ended before the cut and shifts the
+ *    rest back by `leftDur` (a negative start clamps to 0 at read time).
+ * Returned effects are fresh copies so the two halves never alias.
+ */
+const splitEffects = (
+  effects: ClipEffect[],
+  leftDur: number,
+  half: 'left' | 'right',
+): ClipEffect[] => {
+  if (half === 'left') return effects.map((e) => ({ ...e }));
+  return effects
+    .filter((e) => e.end === undefined || e.end > leftDur)
+    .map((e) => ({
+      ...e,
+      start: e.start === undefined ? undefined : Math.max(0, e.start - leftDur),
+      end: e.end === undefined ? undefined : e.end - leftDur,
+    }));
+};
 
 // ---- action input shapes --------------------------------------------------
 // Adds take a friendly input where most fields are optional/defaulted; the
@@ -162,6 +188,14 @@ export interface EditorState extends EditorDocument {
   removeClip: (id: string) => void;
   updateClipTrim: (id: string, inPoint: number, outPoint: number) => ActionResult;
   reorderClips: (fromIndex: number, toIndex: number) => void;
+  /** Cut the clip under `atTime` (global timeline seconds) into two clips at
+   *  that point. Both halves keep the source/effects/color/speed; the left→
+   *  right seam is a hard cut and the original clip's transitionAfter travels
+   *  to the right half. Selects the right half. No-op ActionResult when the
+   *  point isn't strictly inside a clip. Runs the uniform 60s guard: the moved
+   *  transition may no longer fit the shorter right half, which can regrow the
+   *  timeline. */
+  splitClip: (atTime: number) => ActionResult;
   /** Update effect params (filter/adjustments/speed) or mute. Speed changes the
    *  clip's effective duration, so they run the uniform 60s guard. */
   updateClip: (
@@ -576,6 +610,67 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     next.splice(toIndex, 0, moved);
     // Reordering can't change total duration, but positions must be rebuilt.
     set({ clips: sequenceClips(next), ...pushHistory(state) });
+  },
+
+  splitClip: (atTime) => {
+    const state = get();
+    const location = locate(state.clips, atTime);
+    if (!location) return { ok: false, reason: 'Import a clip to split.' };
+    const { clip, index, localTime } = location;
+
+    // The cut (a SOURCE time inside the trim window) must leave a real segment
+    // on each side — a seam or a clip edge yields nothing to split.
+    const MIN = 0.05;
+    if (localTime - clip.inPoint < MIN || clip.outPoint - localTime < MIN) {
+      return { ok: false, reason: 'Move the playhead inside a clip to split it.' };
+    }
+
+    // Left half's length in TIMELINE seconds (source span ÷ speed) — the origin
+    // to shift the right half's effect windows against.
+    const speed = clip.speed > 0 ? clip.speed : 1;
+    const leftDur = (localTime - clip.inPoint) / speed;
+
+    const left: Clip = {
+      ...clip,
+      outPoint: localTime,
+      transitionAfter: undefined, // left → right is a hard cut
+      effects: splitEffects(clip.effects, leftDur, 'left'),
+      adjustments: { ...clip.adjustments },
+      crop: clip.crop ? { ...clip.crop } : undefined,
+    };
+    const right: Clip = {
+      ...clip,
+      id: uid('clip'),
+      inPoint: localTime,
+      // transitionAfter travels to the right half (kept via the spread above).
+      effects: splitEffects(clip.effects, leftDur, 'right'),
+      adjustments: { ...clip.adjustments },
+      crop: clip.crop ? { ...clip.crop } : undefined,
+    };
+
+    const candidate = sequenceClips([
+      ...state.clips.slice(0, index),
+      left,
+      right,
+      ...state.clips.slice(index + 1),
+    ]);
+    // A transition that moved to the now-shorter right half may no longer fit,
+    // so its overlap shrinks and the timeline regrows — same uniform guard as
+    // every other length-affecting action (never per-action delta math).
+    if (exceedsMax(candidate)) {
+      return {
+        ok: false,
+        reason: `Splitting here would push the video over the ${MAX_TIMELINE_DURATION}s limit.`,
+      };
+    }
+
+    set({
+      clips: candidate,
+      selectedItemId: right.id,
+      selectedTransitionId: null,
+      ...pushHistory(state),
+    });
+    return { ok: true };
   },
 
   // ---- text overlay actions (do not count toward the 60s video limit) ----

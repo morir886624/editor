@@ -1,73 +1,80 @@
-# React + TypeScript + Vite
+# Video Editor
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A CapCut-style, **mobile-first web video editor** for ≤60-second videos, plus a
+batch **Shorts** splitter that cuts one long video into many one-minute clips.
+Everything runs in the browser — React 19 + TypeScript + Vite, Zustand for
+state, FFmpeg.wasm for media processing. **No backend.**
 
-Currently, two official plugins are available:
+## Repository layout
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+This is a pnpm + Turborepo monorepo:
 
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```
+.
+├── apps/
+│   └── web/            # the editor (Vite app) — this is what ships
+│       ├── public/     # copied verbatim to dist/ (ffmpeg wasm, fonts, .htaccess)
+│       └── src/        # store / lib / components / types
+├── packages/
+│   └── config/         # shared config (prettier, …)
+├── turbo.json
+└── pnpm-workspace.yaml
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## Development
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+pnpm install     # install deps
+pnpm dev         # Vite dev server (auto-picks 5173/5174/…)
+pnpm build       # tsc -b && vite build — the authoritative typecheck + bundle
+pnpm lint        # eslint
+pnpm preview     # serve the production build locally
 ```
+
+`pnpm build` is the real gate (strict TS then Vite). The production bundle is
+emitted to **`apps/web/dist/`**.
+
+## Deployment
+
+The app is fully static — serve the **contents of `apps/web/dist/`** from your
+web root. The build already includes a `.htaccess` (from `apps/web/public/`) that
+fixes the index/403, sets the correct `.wasm` MIME type, and configures caching.
+
+> Do **not** add COOP/COEP (cross-origin isolation) headers — they break
+> FFmpeg's CDN fallback.
+
+### Hostinger / shared Apache hosting
+
+1. Build locally:
+   ```bash
+   pnpm install && pnpm build
+   ```
+2. Upload the **contents** of `apps/web/dist/` (not the folder itself) into
+   `public_html/`. The result must be:
+   ```
+   public_html/
+   ├── .htaccess
+   ├── index.html      ← directly at the root (this is what fixes the 403)
+   ├── assets/
+   └── ffmpeg/         ← ~32 MB of wasm
+   ```
+   A 403 on the home page means `index.html` is not at the web root (usually the
+   files were left inside a `dist/` subfolder).
+3. If it persists, check permissions: folders `755`, files `644`.
+
+To make a ready-to-upload zip on Windows (PowerShell):
+
+```powershell
+Compress-Archive -Path apps/web/dist/* -DestinationPath editor-dist.zip -Force
+```
+
+Then upload `editor-dist.zip` via hPanel → File Manager → into `public_html/`
+and **Extract** it there.
+
+### Static hosts with Git integration (Vercel / Netlify / Cloudflare Pages)
+
+- **Build command:** `pnpm build`
+- **Output directory:** `apps/web/dist`
+- **Install command:** `pnpm install`
+
+(The `.htaccess` is Apache-only and simply ignored by these hosts.)
