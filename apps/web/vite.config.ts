@@ -10,6 +10,13 @@ export default defineConfig({
   optimizeDeps: {
     exclude: ['@ffmpeg/ffmpeg', '@ffmpeg/util'],
   },
+  // Keep the FFmpeg worker a MODULE worker in production builds (dev always
+  // serves it as one). The default iife build downgrades it to a classic
+  // worker, which loads the core via importScripts instead of import() —
+  // a different code path than dev, and one the ESM core can't satisfy.
+  worker: {
+    format: 'es',
+  },
   server: {
     // Increase the request timeout for large files like FFmpeg WASM
     middlewareMode: false,

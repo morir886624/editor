@@ -87,7 +87,8 @@ Cuts one long video into consecutive shorts of a chosen length (5–60s), stream
 
 ### FFmpeg.wasm (`src/lib/ffmpeg.ts`, `src/store/ffmpegStore.ts`)
 Used for thumbnails, export, and the batch splitter. Loaded **lazily** on first need. Key constraints:
-- Single-threaded `@ffmpeg/core` (pinned `0.12.9`) is **self-hosted in `/public/ffmpeg`** (committed, ~32MB wasm) with the unpkg CDN as fallback; both fetched via `toBlobURL`, each attempt on a fresh instance (a failed load wedges the worker) → **no COOP/COEP headers** (cross-origin isolation would break the CDN fallback; do not add it).
+- Single-threaded `@ffmpeg/core` (pinned `0.12.9`) is **self-hosted in `/public/ffmpeg`** (committed, ~32MB wasm) with the unpkg CDN as fallback; both fetched into blob URLs, each attempt on a fresh instance (a failed load wedges the worker) → **no COOP/COEP headers** (cross-origin isolation would break the CDN fallback; do not add it).
+- The core MUST be the **ESM build** (`dist/esm`, self-hosted as `ffmpeg-core.esm.js` — new name to dodge the immutable 1-year cache on the old UMD file). The worker is a MODULE worker (dev always; build via `worker.format: 'es'` in vite.config.ts), and a module worker can only load the core through `import()` — the UMD core exports nothing there and dies with "failed to import ffmpeg-core.js". Worker failures reach the main thread as **strings**, not Errors (normalized in `loadFFmpeg`), and a worker that fails to boot never settles `load()` at all (hence the 60s timeout).
 - `@ffmpeg/ffmpeg` and `@ffmpeg/util` are in `optimizeDeps.exclude` (vite.config.ts) because the worker is spawned via `new URL('./worker.js', import.meta.url)` and pre-bundling breaks that.
 - One wasm instance can't run concurrent commands — all exec/read/write sequences go through the `runExclusive` mutex. Thumbnails are cached by clip id and deduped against StrictMode double-fire via an in-flight promise map.
 
