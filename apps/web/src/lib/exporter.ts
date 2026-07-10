@@ -2,11 +2,12 @@
 // Export pipeline (stage 6): bake the whole project into one MP4.
 //
 // Runs entirely in FFmpeg.wasm, sequentially and memory-conscious:
-//   1. per clip  — write ONE source into MEMFS, render a normalized video
-//      segment (trim -> speed via setpts -> fps -> contain-scale/pad -> color
-//      ops -> yuv420p, x264) and a matching audio segment (trim -> atempo ->
-//      48k stereo PCM wav; silence when muted/audioless), then DELETE the
-//      source before the next clip;
+//   1. per clip  — mount ONE source read-only via WORKERFS (streamed from
+//      blob storage, never copied into the ~2GB wasm heap), render a
+//      normalized video segment (trim -> speed via setpts -> fps ->
+//      contain-scale/pad -> color ops -> yuv420p, x264) and a matching audio
+//      segment (trim -> atempo -> 48k stereo PCM wav; silence when
+//      muted/audioless), then UNMOUNT the source before the next clip;
 //   2. join      — no transitions: concat losslessly (video: -c copy; audio:
 //      PCM copy — PCM is gapless, avoiding AAC priming drift at clip seams);
 //      with transitions: one xfade/acrossfade filter graph (concat filter at
@@ -31,6 +32,7 @@
 // ---------------------------------------------------------------------------
 
 import { fetchFile } from '@ffmpeg/util';
+import { FFFSType } from '@ffmpeg/ffmpeg';
 import { loadFFmpeg, runExclusive } from './ffmpeg';
 import { useEditorStore } from '../store/editorStore';
 import {
@@ -179,12 +181,81 @@ export async function runExport(
   return runExclusive(async () => {
     const ffmpeg = await loadFFmpeg();
     const created = new Set<string>();
+    let mountDir: string | null = null;
 
     const onFFmpegProgress = ({ time }: { progress: number; time: number }) => {
       // `time` is the produced output timestamp in microseconds.
       if (stepOutSec > 0) report(time / 1e6 / stepOutSec);
     };
     ffmpeg.on('progress', onFFmpegProgress);
+
+    // Keep the tail of ffmpeg's stderr: when an exec fails, its last lines
+    // carry the actual reason (decoder missing, out of memory, bad filter…)
+    // which a bare exit code hides from the user. 80 lines is enough to still
+    // hold the input dump (stream/codec info) alongside the error itself.
+    const logTail: string[] = [];
+    const onFFmpegLog = ({ message }: { type: string; message: string }) => {
+      logTail.push(message);
+      if (logTail.length > 80) logTail.shift();
+    };
+    ffmpeg.on('log', onFFmpegLog);
+    const failureDetail = () => {
+      const lines = logTail.map((l) => l.trim()).filter((l) => l.length > 0);
+      if (lines.length === 0) return '';
+      console.error('[Export] ffmpeg log tail:\n' + lines.join('\n'));
+      // The input dump names the source's video codec. The in-browser FFmpeg
+      // decodes H.264/HEVC/VP8/VP9 but has NO AV1 decoder — AV1 sources
+      // (typical of YouTube downloads; the browser itself plays them fine,
+      // which is why the preview works) die with a cryptic "cannot determine
+      // format of input stream after EOF". Name the real problem instead.
+      const codecLine = lines.find((l) => /Stream #\d+:\d+.*: Video: /.test(l));
+      const codec = codecLine ? /: Video: ([a-z0-9_]+)/i.exec(codecLine)?.[1] : undefined;
+      if (codec && codec.toLowerCase() === 'av1') {
+        return (
+          ' This video is AV1-encoded, which the in-browser encoder cannot decode' +
+          ' (your browser can, which is why playback works). Re-download the source' +
+          ' as H.264/AVC, or convert it first — e.g. with HandBrake, or:' +
+          ' ffmpeg -i "input.mp4" -c:v libx264 -crf 18 -c:a copy "output.mp4"'
+        );
+      }
+      return ` (${lines.slice(-4).join(' · ')})`;
+    };
+
+    // Mount ONE source blob read-only via WORKERFS (same strategy as the
+    // splitter): the file is streamed straight from blob storage instead of
+    // being copied into the ~2GB wasm heap — copying is what used to blow up
+    // exports of large sources. Returns the in-FS path to read from.
+    const mountSource = async (blobUrl: string, name: string): Promise<string> => {
+      const blob = await fetch(blobUrl).then((r) => r.blob());
+      const dir = '/xmnt';
+      // Self-heal from a crashed earlier run that left the dir (or a stale
+      // mount) behind — createDir throws on an existing directory.
+      try {
+        await ffmpeg.unmount(dir);
+      } catch {
+        /* not mounted */
+      }
+      try {
+        await ffmpeg.deleteDir(dir);
+      } catch {
+        /* absent */
+      }
+      await ffmpeg.createDir(dir);
+      await ffmpeg.mount(FFFSType.WORKERFS, { blobs: [{ name, data: blob }] }, dir);
+      mountDir = dir;
+      return `${dir}/${name}`;
+    };
+    const unmountSource = async () => {
+      if (!mountDir) return;
+      const dir = mountDir;
+      mountDir = null;
+      try {
+        await ffmpeg.unmount(dir);
+        await ffmpeg.deleteDir(dir);
+      } catch {
+        /* best-effort */
+      }
+    };
 
     const write = async (name: string, data: Uint8Array | string) => {
       await ffmpeg.writeFile(
@@ -202,9 +273,10 @@ export async function runExport(
       created.delete(name);
     };
     const exec = async (args: string[], failure: string) => {
+      logTail.length = 0;
       const ret = await ffmpeg.exec(args);
       if (token.cancelled) throw new ExportCancelledError();
-      if (ret !== 0) throw new Error(failure);
+      if (ret !== 0) throw new Error(failure + failureDetail());
     };
 
     try {
@@ -213,13 +285,12 @@ export async function runExport(
         const clip = clips[i];
         const segDur = segDurs[i];
         const srcLen = clip.outPoint - clip.inPoint;
-        const src = `xsrc_${i}.${fileExt(clip.sourceFileName, 'mp4')}`;
         const vseg = `xv_${i}.mp4`;
         const aseg = `xa_${i}.wav`;
         const n = `${i + 1}/${clips.length}`;
 
         beginStep(`Loading clip ${n}…`, 0.4);
-        await write(src, await fetchFile(clip.src));
+        const src = await mountSource(clip.src, `xsrc_${i}.${fileExt(clip.sourceFileName, 'mp4')}`);
         endStep();
 
         beginStep(`Rendering clip ${n}…`, 3 * Math.max(segDur, 0.3), segDur);
@@ -279,7 +350,7 @@ export async function runExport(
         created.add(aseg);
         endStep();
 
-        await remove(src); // free the (potentially large) source right away
+        await unmountSource(); // release the source blob before the next clip
       }
 
       // ---- 2. join segments -------------------------------------------------
@@ -497,8 +568,10 @@ export async function runExport(
       return { blob, filename };
     } finally {
       ffmpeg.off('progress', onFFmpegProgress);
-      // If cancelled, the worker (and its whole MEMFS) is already gone.
+      ffmpeg.off('log', onFFmpegLog);
+      // If cancelled, the worker (and its whole MEMFS/mounts) is already gone.
       if (!token.cancelled) {
+        await unmountSource();
         for (const name of [...created]) {
           try {
             await ffmpeg.deleteFile(name);

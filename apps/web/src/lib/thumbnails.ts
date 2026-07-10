@@ -8,7 +8,7 @@
 // strip still tracks the trim.
 // ---------------------------------------------------------------------------
 
-import { fetchFile } from '@ffmpeg/util';
+import { FFFSType } from '@ffmpeg/ffmpeg';
 import { loadFFmpeg, runExclusive } from './ffmpeg';
 import type { Clip } from '../types';
 
@@ -55,45 +55,61 @@ export function generateThumbnails(clip: ThumbnailSource): Promise<Thumbnail[]> 
     const duration = Math.max(clip.sourceDuration, 0.001);
     const count = thumbCount(duration);
     const rate = count / duration; // frames per second the fps filter targets
-    const input = `tsrc_${clip.id}.mp4`;
+    const mountDir = '/tmnt';
+    const input = `${mountDir}/tsrc_${clip.id}.mp4`;
     const pattern = `tmb_${clip.id}_%03d.jpg`;
 
     const thumbs = await runExclusive(async () => {
-      await ffmpeg.writeFile(input, await fetchFile(clip.src));
-      // fps resamples to ~`rate` fps; -frames:v caps the count; scale keeps AR.
-      await ffmpeg.exec([
-        '-i', input,
-        '-vf', `fps=${rate.toFixed(6)},scale=160:-2`,
-        '-frames:v', String(count),
-        '-q:v', '5',
-        pattern,
-      ]);
+      // Mount the source read-only via WORKERFS (streamed from blob storage)
+      // instead of copying it into the ~2GB wasm heap — a large import used
+      // to blow the heap before the timeline even rendered.
+      const blob = await fetch(clip.src).then((r) => r.blob());
+      await ffmpeg.createDir(mountDir);
+      await ffmpeg.mount(
+        FFFSType.WORKERFS,
+        { blobs: [{ name: `tsrc_${clip.id}.mp4`, data: blob }] },
+        mountDir,
+      );
+      try {
+        // fps resamples to ~`rate` fps; -frames:v caps the count; scale keeps AR.
+        await ffmpeg.exec([
+          '-i', input,
+          '-vf', `fps=${rate.toFixed(6)},scale=160:-2`,
+          '-frames:v', String(count),
+          '-q:v', '5',
+          pattern,
+        ]);
 
-      const out: Thumbnail[] = [];
-      for (let i = 1; i <= count; i++) {
-        const name = `tmb_${clip.id}_${String(i).padStart(3, '0')}.jpg`;
+        const out: Thumbnail[] = [];
+        for (let i = 1; i <= count; i++) {
+          const name = `tmb_${clip.id}_${String(i).padStart(3, '0')}.jpg`;
+          try {
+            const data = (await ffmpeg.readFile(name)) as Uint8Array;
+            // Copy into a fresh ArrayBuffer-backed buffer for Blob (avoids the
+            // SharedArrayBuffer-vs-ArrayBuffer typing mismatch).
+            const buffer = data.buffer.slice(
+              data.byteOffset,
+              data.byteOffset + data.byteLength,
+            ) as ArrayBuffer;
+            const jpeg = new Blob([buffer], { type: 'image/jpeg' });
+            // Frame i (1-based) sampled at ~ (i-1)/rate seconds into the source.
+            out.push({ t: (i - 1) / rate, url: URL.createObjectURL(jpeg) });
+            await ffmpeg.deleteFile(name);
+          } catch {
+            break; // fewer frames than requested — stop at the first gap
+          }
+        }
+        return out;
+      } finally {
+        // Always release the mount — a leftover dir would fail the next job's
+        // createDir and take every future thumbnail down with it.
         try {
-          const data = (await ffmpeg.readFile(name)) as Uint8Array;
-          // Copy into a fresh ArrayBuffer-backed buffer for Blob (avoids the
-          // SharedArrayBuffer-vs-ArrayBuffer typing mismatch).
-          const buffer = data.buffer.slice(
-            data.byteOffset,
-            data.byteOffset + data.byteLength,
-          ) as ArrayBuffer;
-          const blob = new Blob([buffer], { type: 'image/jpeg' });
-          // Frame i (1-based) sampled at ~ (i-1)/rate seconds into the source.
-          out.push({ t: (i - 1) / rate, url: URL.createObjectURL(blob) });
-          await ffmpeg.deleteFile(name);
+          await ffmpeg.unmount(mountDir);
+          await ffmpeg.deleteDir(mountDir);
         } catch {
-          break; // fewer frames than requested — stop at the first gap
+          /* best-effort cleanup */
         }
       }
-      try {
-        await ffmpeg.deleteFile(input);
-      } catch {
-        /* best-effort cleanup */
-      }
-      return out;
     });
 
     cache.set(clip.id, thumbs);
