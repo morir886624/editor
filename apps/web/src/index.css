@@ -2861,6 +2861,7 @@ canvas.frame-bg {
 
 .app--mobile {
   max-width: none;
+  height: 100vh;
 }
 
 .mobile {
