@@ -6,6 +6,9 @@ import { isAcceptedFile, readVideoMeta } from '../lib/media';
 import { planSegmentCount, type SplitSegment } from '../lib/splitter';
 import { MAX_TIMELINE_DURATION } from '../lib/duration';
 import { formatTime, formatTimecode } from '../lib/timeline';
+import { getPlatform } from '../lib/platform';
+import { useOutputAction } from '../lib/useOutputAction';
+import { useBackHandler } from '../lib/backStack';
 
 const LENGTH_PRESETS = [15, 30, 60] as const;
 const MIN_LENGTH = 5;
@@ -56,12 +59,20 @@ function SplitDialogContent() {
   const addSource = useEditorStore((s) => s.addSource);
   const addClip = useEditorStore((s) => s.addClip);
   const notify = useNoticeStore((s) => s.push);
+  const platform = getPlatform();
+  const { busy: saving, run: runOutput } = useOutputAction();
 
   const inputRef = useRef<HTMLInputElement>(null);
   const [reading, setReading] = useState(false);
   const [segmentLength, setSegmentLength] = useState(60);
   // Index of the segment being adjusted against the original (null = list view).
   const [adjusting, setAdjusting] = useState<number | null>(null);
+  // Android back: Adjust view → list → closed. Swallowed while cutting.
+  useBackHandler(true, () => {
+    if (useSplitStore.getState().status === 'running') return;
+    if (adjusting !== null) setAdjusting(null);
+    else close();
+  });
 
   const running = status === 'running';
   const count = source ? planSegmentCount(source.duration, segmentLength) : 0;
@@ -155,17 +166,9 @@ function SplitDialogContent() {
     close();
   };
 
-  // Sequential <a download> clicks; the browser asks once to allow multiple
-  // downloads. Small delay so clicks aren't coalesced.
-  const downloadAll = async () => {
-    for (const seg of segments) {
-      const a = document.createElement('a');
-      a.href = seg.url;
-      a.download = seg.filename;
-      a.click();
-      await new Promise((r) => setTimeout(r, 350));
-    }
-  };
+  // Web: sequential <a download> clicks (see platform.ts). Native: gallery.
+  const toOutput = (seg: SplitSegment) => ({ url: seg.url, filename: seg.filename, blob: seg.file });
+  const downloadAll = () => runOutput(() => platform.saveFiles(segments.map(toOutput)));
 
   return (
     <div className="modal-backdrop" onClick={() => !running && close()}>
@@ -311,13 +314,26 @@ function SplitDialogContent() {
                       {formatSize(seg.sizeBytes)}
                     </span>
                     <span className="modal__segactions">
-                      <a
-                        className="modal__download modal__download--small"
-                        href={seg.url}
-                        download={seg.filename}
-                      >
-                        ⬇
-                      </a>
+                      {platform.isNative ? (
+                        <button
+                          type="button"
+                          className="modal__download modal__download--small"
+                          title={platform.saveLabel}
+                          aria-label={`${platform.saveLabel}: ${seg.filename}`}
+                          onClick={() => runOutput(() => platform.saveFiles([toOutput(seg)]))}
+                          disabled={saving}
+                        >
+                          ⬇
+                        </button>
+                      ) : (
+                        <a
+                          className="modal__download modal__download--small"
+                          href={seg.url}
+                          download={seg.filename}
+                        >
+                          ⬇
+                        </a>
+                      )}
                       <button
                         type="button"
                         className="texted__preset"
@@ -351,8 +367,13 @@ function SplitDialogContent() {
               ) : (
                 <>
                   {segments.length > 1 && (
-                    <button type="button" className="modal__btn" onClick={downloadAll}>
-                      ⬇ Download all ({segments.length})
+                    <button
+                      type="button"
+                      className="modal__btn"
+                      onClick={downloadAll}
+                      disabled={saving}
+                    >
+                      ⬇ {platform.isNative ? 'Save all' : 'Download all'} ({segments.length})
                     </button>
                   )}
                   <button

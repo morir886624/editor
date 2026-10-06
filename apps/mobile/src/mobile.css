@@ -1,0 +1,32 @@
+/* Native-shell tweaks layered over the shared editor stylesheet
+   (@web/index.css). Rules are scoped to html.is-native, set by
+   initNativeShell(), so `pnpm start` in a browser looks like the web app. */
+
+html.is-native,
+html.is-native body {
+  /* No rubber-band / pull-to-refresh: it fights timeline drags. */
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+  /* Long-press shouldn't pop the WebView's text-selection UI on chrome. */
+  -webkit-touch-callout: none;
+}
+
+/* Landscape on notched phones: keep the shell clear of side cutouts. The top
+   and bottom insets are already handled by the mobile shell itself. */
+html.is-native .app--mobile {
+  box-sizing: border-box;
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+
+/* Toasts sit above the gesture bar / home indicator. */
+html.is-native .notices {
+  bottom: calc(16px + env(safe-area-inset-bottom));
+}
+
+/* Modals: stay inside the safe area on edge-to-edge displays. */
+html.is-native .modal-backdrop {
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  box-sizing: border-box;
+}

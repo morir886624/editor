@@ -1,4 +1,5 @@
 import { useInstallStore } from '../store/installStore';
+import { getPlatform } from '../lib/platform';
 
 /** Running as an installed app (standalone window), so hide the banner. */
 function isStandalone(): boolean {
@@ -31,7 +32,7 @@ export function InstallPrompt() {
   const setInstalled = useInstallStore((s) => s.setInstalled);
   const dismiss = useInstallStore((s) => s.dismiss);
 
-  if (installed || dismissed || isStandalone()) return null;
+  if (installed || dismissed || isStandalone() || getPlatform().isNative) return null;
 
   const ios = isIOS();
   // Nothing to show until Chromium offers a prompt — except on iOS, where no

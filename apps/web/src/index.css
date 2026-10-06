@@ -2429,6 +2429,28 @@ canvas.frame-bg {
   border-color: var(--accent);
 }
 
+/* Native shell: Save/Share render as <button>s instead of <a download>. */
+button.modal__download {
+  border: 0;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+button.modal__download--small {
+  border: 1px solid var(--border);
+}
+
+button.modal__download:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.modal__native-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .modal__actions {
   display: flex;
   justify-content: flex-end;

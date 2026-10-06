@@ -6,6 +6,9 @@ import { QUALITY_SETTINGS, RESOLUTION_OPTIONS, exportDimensions } from '../lib/e
 import type { ExportQuality } from '../lib/exportFilters';
 import { formatTime } from '../lib/timeline';
 import type { AspectRatio, ExportResolution } from '../types';
+import { getPlatform } from '../lib/platform';
+import { useOutputAction } from '../lib/useOutputAction';
+import { useBackHandler } from '../lib/backStack';
 
 const ASPECTS: AspectRatio[] = ['9:16', '1:1', '16:9'];
 const HEAVY_RESOLUTIONS: ExportResolution[] = ['1440p', '2160p'];
@@ -46,6 +49,14 @@ function ExportDialogContent() {
 
   const clips = useEditorStore((s) => s.clips);
   const settings = useEditorStore((s) => s.settings);
+
+  const platform = getPlatform();
+  const { busy: saving, run: runOutput } = useOutputAction();
+  // Android back closes the dialog — but is swallowed while encoding, so a
+  // stray back press can't background the app mid-export.
+  useBackHandler(true, () => {
+    if (useExportStore.getState().status !== 'running') close();
+  });
 
   const [resolution, setResolution] = useState<ExportResolution>(settings.exportResolution);
   const [aspect, setAspect] = useState<AspectRatio>(settings.aspectRatio);
@@ -192,9 +203,32 @@ function ExportDialogContent() {
               <p className="modal__note">
                 Done — {result.filename} ({formatSize(result.sizeBytes)})
               </p>
-              <a className="modal__download" href={result.url} download={result.filename}>
-                ⬇ Download MP4
-              </a>
+              {platform.isNative ? (
+                <div className="modal__native-actions">
+                  <button
+                    type="button"
+                    className="modal__download"
+                    onClick={() => runOutput(() => platform.saveFiles([result]))}
+                    disabled={saving}
+                  >
+                    {saving ? 'Saving…' : `⬇ ${platform.saveLabel}`}
+                  </button>
+                  {platform.canShare && (
+                    <button
+                      type="button"
+                      className="modal__btn"
+                      onClick={() => runOutput(() => platform.shareFiles([result]))}
+                      disabled={saving}
+                    >
+                      Share…
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <a className="modal__download" href={result.url} download={result.filename}>
+                  ⬇ Download MP4
+                </a>
+              )}
             </div>
           )}
 
