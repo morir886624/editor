@@ -65,8 +65,25 @@ function SplitDialogContent() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [reading, setReading] = useState(false);
   const [segmentLength, setSegmentLength] = useState(60);
+  const [autoDownload, setAutoDownload] = useState(true);
   // Index of the segment being adjusted against the original (null = list view).
   const [adjusting, setAdjusting] = useState<number | null>(null);
+
+  const running = status === 'running';
+
+  // Auto-download as segments finish
+  const prevCount = useRef(segments.length);
+  useEffect(() => {
+    if (autoDownload && running && segments.length > prevCount.current) {
+      const newSegs = segments.slice(prevCount.current);
+      if (newSegs.length > 0) {
+        // Fire and forget auto-download to avoid blocking UI or clashing runOutput busy state
+        platform.saveFiles(newSegs.map(toOutput)).catch(console.error);
+      }
+    }
+    prevCount.current = segments.length;
+  }, [segments, autoDownload, running, platform]);
+
   // Android back: Adjust view → list → closed. Swallowed while cutting.
   useBackHandler(true, () => {
     if (useSplitStore.getState().status === 'running') return;
@@ -74,7 +91,6 @@ function SplitDialogContent() {
     else close();
   });
 
-  const running = status === 'running';
   const count = source ? planSegmentCount(source.duration, segmentLength) : 0;
   const adjustingSegment =
     adjusting === null ? undefined : segments.find((s) => s.index === adjusting);
@@ -244,7 +260,17 @@ function SplitDialogContent() {
 
             {/* segment length */}
             <div className="texted__field">
-              <span>Length of each short</span>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>Length of each short</span>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.85em', opacity: 0.8 }}>
+                  <input
+                    type="checkbox"
+                    checked={autoDownload}
+                    onChange={(e) => setAutoDownload(e.target.checked)}
+                  />
+                  Auto-download
+                </label>
+              </div>
               <div className="texted__presets texted__presets--four">
                 {LENGTH_PRESETS.map((len) => (
                   <button
@@ -360,31 +386,29 @@ function SplitDialogContent() {
 
             {/* actions */}
             <div className="modal__actions">
+              {segments.length > 1 && (
+                <button
+                  type="button"
+                  className="modal__btn"
+                  onClick={downloadAll}
+                  disabled={saving}
+                >
+                  ⬇ {platform.isNative ? 'Save all' : 'Download all'} ({segments.length})
+                </button>
+              )}
               {running ? (
                 <button type="button" className="modal__btn modal__btn--danger" onClick={cancel}>
                   Stop
                 </button>
               ) : (
-                <>
-                  {segments.length > 1 && (
-                    <button
-                      type="button"
-                      className="modal__btn"
-                      onClick={downloadAll}
-                      disabled={saving}
-                    >
-                      ⬇ {platform.isNative ? 'Save all' : 'Download all'} ({segments.length})
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    className="modal__btn modal__btn--primary"
-                    onClick={() => start(segmentLength)}
-                    disabled={!source || reading}
-                  >
-                    {status === 'done' ? 'Split again' : 'Split into shorts'}
-                  </button>
-                </>
+                <button
+                  type="button"
+                  className="modal__btn modal__btn--primary"
+                  onClick={() => start(segmentLength)}
+                  disabled={!source || reading}
+                >
+                  {status === 'done' ? 'Split again' : 'Split into shorts'}
+                </button>
               )}
             </div>
           </div>

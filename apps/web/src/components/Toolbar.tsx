@@ -64,11 +64,6 @@ export function Toolbar() {
 
   return (
     <nav className="toolbar" aria-label="Tools">
-      <span className="toolbar__brand">
-        <span className="toolbar__brand-mark" aria-hidden="true">Ed</span>
-        Editor
-      </span>
-      <span className="toolbar__sep" aria-hidden="true" />
 
       <button
         type="button"
@@ -150,6 +145,30 @@ export function Toolbar() {
         Split
       </button>
 
+      <span className="toolbar__sep" aria-hidden="true" />
+
+      <button
+        type="button"
+        className="toolbar__btn toolbar__btn--active toolbar__btn--icon"
+        onClick={useEditorStore.getState().undo}
+        disabled={!useEditorStore((s) => s.past.length > 0)}
+        title="Undo (Ctrl+Z)"
+        aria-label="Undo"
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
+      </button>
+
+      <button
+        type="button"
+        className="toolbar__btn toolbar__btn--active toolbar__btn--icon"
+        onClick={useEditorStore.getState().redo}
+        disabled={!useEditorStore((s) => s.future.length > 0)}
+        title="Redo (Ctrl+Y)"
+        aria-label="Redo"
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7"/></svg>
+      </button>
+
       <span className="toolbar__spacer" aria-hidden="true" />
 
       <button
@@ -175,10 +194,12 @@ export function Toolbar() {
       <button
         type="button"
         className="toolbar__btn toolbar__btn--active toolbar__btn--primary"
+        style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
         onClick={openExport}
         disabled={!hasClips}
         title={hasClips ? 'Export the project as MP4' : 'Import a clip first'}
       >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
         Export
       </button>
 

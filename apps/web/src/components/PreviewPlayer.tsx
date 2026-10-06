@@ -29,11 +29,11 @@ import {
   grainTextureUrl,
 } from '../lib/videoEffects';
 import { useAudioMixer } from '../lib/useAudioMixer';
-import { BLUR_DIM, BLUR_ZOOM, aspectDims, frameBackgroundUrl, frameLayout } from '../lib/frame';
-import { FULL_CROP, computeCropLayout } from '../lib/crop';
+import { aspectDims, frameBackgroundUrl, frameLayout } from '../lib/frame';
+import { computeCropLayout } from '../lib/crop';
 import { CropOverlay } from './CropOverlay';
 import { formatTime, formatTimecode } from '../lib/timeline';
-import type { AspectRatio, Clip, ClipCrop, TextOverlay } from '../types';
+import type { AspectRatio, Clip, TextOverlay } from '../types';
 
 const ASPECT_CSS: Record<AspectRatio, string> = {
   '9:16': '9 / 16',
@@ -72,7 +72,8 @@ const BLUR_BACKING_SHORT = 96;
 function paintBlurBackdrop(
   canvas: HTMLCanvasElement,
   video: HTMLVideoElement,
-  crop: ClipCrop | undefined,
+  crop: any, // ClipCrop | undefined
+  layout: any, // FrameLayout
 ) {
   const ctx = canvas.getContext('2d');
   const vw = video.videoWidth;
@@ -83,7 +84,7 @@ function paintBlurBackdrop(
   const targetAR = cw / ch;
   // Sample inside the clip's crop rect (the export blurs the already-cropped
   // joined video), cover-fitting that region to the canvas aspect.
-  const c = crop ?? FULL_CROP;
+  const c = crop ?? { x: 0, y: 0, w: 1, h: 1 };
   const rx = c.x * vw;
   const ry = c.y * vh;
   const rw = c.w * vw;
@@ -92,15 +93,34 @@ function paintBlurBackdrop(
   let sh = rh;
   if (rw / rh > targetAR) sw = rh * targetAR;
   else sh = rw / targetAR;
-  const dw = cw * BLUR_ZOOM;
-  const dh = ch * BLUR_ZOOM;
+  const dw = cw * 1.18; // BLUR_ZOOM
+  const dh = ch * 1.18;
+  
+  ctx.globalCompositeOperation = 'source-over';
   ctx.drawImage(
     video,
     rx + (rw - sw) / 2, ry + (rh - sh) / 2, sw, sh,
     (cw - dw) / 2, (ch - dh) / 2, dw, dh,
   );
+  
+  // Cut the hole for the video to show through!
+  ctx.globalCompositeOperation = 'destination-out';
+  const hx = layout.x * cw;
+  const hy = layout.y * ch;
+  const hw = layout.w * cw;
+  const hh = layout.h * ch;
+  const r = layout.radiusPct * (Math.min(cw, ch) / 100);
+  
+  ctx.beginPath();
+  if (ctx.roundRect) {
+    ctx.roundRect(hx, hy, hw, hh, r);
+  } else {
+    ctx.rect(hx, hy, hw, hh); // fallback for very old browsers
+  }
+  ctx.fill();
+  
   const grade = video.style.filter && video.style.filter !== 'none' ? `${video.style.filter} ` : '';
-  canvas.style.filter = `${grade}blur(1.6cqmin) brightness(${BLUR_DIM})`;
+  canvas.style.filter = `${grade}blur(1.6cqmin) brightness(0.82)`;
 }
 
 /**
@@ -292,13 +312,14 @@ export function PreviewPlayer() {
     el: HTMLVideoElement,
     layer: TransitionLayerStyle,
     z: number,
-    fxTransform = '',
+    fxEffects = { transform: '', filter: '' },
   ) => {
     const box = el.parentElement;
     if (!box) return;
     box.style.opacity = String(layer.opacity);
     const base = layer.transform === 'none' ? '' : layer.transform;
-    box.style.transform = [base, fxTransform].filter(Boolean).join(' ') || 'none';
+    box.style.transform = [base, fxEffects.transform].filter(Boolean).join(' ') || 'none';
+    box.style.filter = fxEffects.filter || 'none';
     box.style.zIndex = String(z);
   };
 
@@ -312,17 +333,17 @@ export function PreviewPlayer() {
     // Stage-8 effect transform for the clip an element displays, at that
     // clip's LOCAL time — each element carries its own clip's effects, like
     // it carries its own CSS filter.
-    const fxTransformOf = (el: HTMLVideoElement | null): string => {
-      if (!el?.dataset.clipId) return '';
+    const fxEffectsOf = (el: HTMLVideoElement | null): { transform: string; filter: string } => {
+      if (!el?.dataset.clipId) return { transform: '', filter: '' };
       const clip = state.clips.find((c) => c.id === el.dataset.clipId);
-      if (!clip || clip.effects.length === 0) return '';
-      return computeEffectsFrame(clip, state.playheadTime - clip.position).transform;
+      if (!clip || clip.effects.length === 0) return { transform: '', filter: '' };
+      return computeEffectsFrame(clip, state.playheadTime - clip.position);
     };
 
     if (tl && fromEl && toEl && fromEl !== toEl) {
       const frame = computeTransitionFrame(tl.type, tl.progress);
-      setLayer(fromEl, frame.from, 1, fxTransformOf(fromEl));
-      setLayer(toEl, frame.to, 2, fxTransformOf(toEl));
+      setLayer(fromEl, frame.from, 1, fxEffectsOf(fromEl));
+      setLayer(toEl, frame.to, 2, fxEffectsOf(toEl));
       // Linear crossfade of the clips' own audio — same triangular curves
       // acrossfade uses at export.
       fromEl.volume = Math.min(1, Math.max(0, 1 - tl.progress));
@@ -331,7 +352,7 @@ export function PreviewPlayer() {
       const active = elAt(activeRef.current);
       const idle = elAt(1 - activeRef.current);
       if (active) {
-        setLayer(active, IDENTITY_LAYER, 1, fxTransformOf(active));
+        setLayer(active, IDENTITY_LAYER, 1, fxEffectsOf(active));
         active.volume = 1;
       }
       if (idle) {
@@ -365,12 +386,15 @@ export function PreviewPlayer() {
     // Blurred-fill frame: repaint the backdrop from the clip under the
     // playhead (the OUTGOING clip inside a transition overlap — same
     // preview-grade simplification as the fx layers above).
-    const backdrop = frameBlurRef.current;
-    if (backdrop && state.settings.frame.type === 'blur' && loc) {
-      const srcEl = els.find((el) => el?.dataset.clipId === loc.clip.id);
-      if (srcEl && srcEl.readyState >= 2) paintBlurBackdrop(backdrop, srcEl, loc.clip.crop);
-    }
-  };
+      const backdrop = frameBlurRef.current;
+      if (backdrop && state.settings.frame.type === 'blur' && loc) {
+        const srcEl = els.find((el) => el?.dataset.clipId === loc.clip.id);
+        if (srcEl && srcEl.readyState >= 2) {
+          const l = frameLayout(state.settings.frame, state.settings.aspectRatio);
+          paintBlurBackdrop(backdrop, srcEl, loc.clip.crop, l);
+        }
+      }
+    };
 
   // Re-blend whenever the playhead or document moves (covers playback — the
   // rAF loop writes the playhead every frame — seeks, and undo/redo). Frame /
@@ -784,38 +808,16 @@ export function PreviewPlayer() {
           className="preview__frame"
           style={{ aspectRatio: ASPECT_CSS[aspectRatio] }}
         >
-          {/* Decorative frame background (stage 9A): the SAME SVG the export
-              rasterizes, or — for blurred-fill — a low-res canvas copy of the
-              video repainted by applyBlend. */}
-          {frame.type !== 'none' &&
-            (frameBgUrl ? (
-              <div
-                className="frame-bg"
-                style={{ backgroundImage: `url("${frameBgUrl}")` }}
-                aria-hidden="true"
-              />
-            ) : (
-              <canvas
-                ref={frameBlurRef}
-                className="frame-bg"
-                width={blurDims.width}
-                height={blurDims.height}
-                aria-hidden="true"
-              />
-            ))}
-
-          {/* Video viewport: positioned by frameLayout() percentages; corners
-              round in cqmin (= % of the frame's short side — the same unit
-              the export mask uses). Full-bleed when the frame type is none. */}
+          {/* Video viewport: always full-bleed because the frame is an OVERLAY. */}
           <div
             ref={viewportRef}
             className="frame-viewport"
             style={{
-              left: `${frameRect.x * 100}%`,
-              top: `${frameRect.y * 100}%`,
-              width: `${frameRect.w * 100}%`,
-              height: `${frameRect.h * 100}%`,
-              borderRadius: frameRect.radiusPct > 0 ? `${frameRect.radiusPct}cqmin` : '0',
+              left: '0%',
+              top: '0%',
+              width: '100%',
+              height: '100%',
+              borderRadius: '0',
             }}
           >
             {/* Each video sits in a viewport-sized wrapper: transitions and
@@ -850,6 +852,26 @@ export function PreviewPlayer() {
               );
             })()}
           </div>
+
+          {/* Decorative frame background (stage 9A): drawn ON TOP of the video. 
+              The SVG has a transparent hole in the middle. */}
+          {frame.type !== 'none' &&
+            (frameBgUrl ? (
+              <div
+                className="frame-bg"
+                style={{ backgroundImage: `url("${frameBgUrl}")`, pointerEvents: 'none' }}
+                aria-hidden="true"
+              />
+            ) : (
+              <canvas
+                ref={frameBlurRef}
+                className="frame-bg"
+                width={blurDims.width}
+                height={blurDims.height}
+                style={{ pointerEvents: 'none' }}
+                aria-hidden="true"
+              />
+            ))}
 
           {/* Overlay layer: container ignores pointer events so it doesn't
               swallow drops/clicks; each overlay re-enables them. */}

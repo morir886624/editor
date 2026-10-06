@@ -118,7 +118,7 @@ export interface ImportedSource {
  * motion blur), speed ramp and beat sync arrive in later batches and will
  * extend this union.
  */
-export type VideoEffectType = 'vignette' | 'grain' | 'flash' | 'zoom' | 'shake';
+export type VideoEffectType = 'vignette' | 'grain' | 'flash' | 'zoom' | 'shake' | 'pulse' | 'glitch';
 
 /**
  * One effect applied to a clip — stored as parameters, never baked into
@@ -265,7 +265,7 @@ export interface AudioTrack {
 }
 
 /** Decorative frame styles the video is composited into (stage 9A). */
-export type FrameType = 'none' | 'solid' | 'polaroid' | 'filmstrip' | 'blur';
+export type FrameType = 'none' | 'solid' | 'polaroid' | 'filmstrip' | 'blur' | 'gradient' | 'crt';
 
 /**
  * Project-wide decorative frame: the video is scaled down and composited

@@ -30,6 +30,8 @@ export const EFFECT_OPTIONS: { id: VideoEffectType; label: string; hint: string 
   { id: 'vignette', label: 'Vignette', hint: 'Darkened corners' },
   { id: 'grain', label: 'Film grain', hint: 'Animated noise texture' },
   { id: 'flash', label: 'Flash', hint: 'White burst at the effect start' },
+  { id: 'pulse', label: 'Pulse', hint: 'Rhythmic beating scale' },
+  { id: 'glitch', label: 'Glitch', hint: 'Color shift and distortion' },
 ];
 
 export const DEFAULT_EFFECT_INTENSITY = 50;
@@ -56,6 +58,7 @@ export interface EffectsFrame {
   /** CSS transform fragment ('' = identity), composed after any transition
    *  transform on the <video> element. */
   transform: string;
+  filter: string;
   vignette: number; // 0..1 opacity of the vignette layer
   grain: { opacity: number; x: number; y: number } | null; // offset in px
   flash: number; // 0..1 opacity of the white layer
@@ -63,6 +66,7 @@ export interface EffectsFrame {
 
 export const IDENTITY_EFFECTS_FRAME: EffectsFrame = {
   transform: '',
+  filter: '',
   vignette: 0,
   grain: null,
   flash: 0,
@@ -121,6 +125,7 @@ export function computeEffectsFrame(clip: Clip, localT: number): EffectsFrame {
   );
 
   const transforms: string[] = [];
+  const filters: string[] = [];
   let vignette = 0;
   let flash = 0;
   let grain: EffectsFrame['grain'] = null;
@@ -142,6 +147,23 @@ export function computeEffectsFrame(clip: Clip, localT: number): EffectsFrame {
         transforms.push(
           `translate(${o.x.toFixed(3)}%, ${o.y.toFixed(3)}%) rotate(${o.rot.toFixed(3)}deg)`,
         );
+        break;
+      }
+      case 'pulse': {
+        const beat = 0.5;
+        const phase = (localT % beat) / beat;
+        const bump = Math.max(0, 1 - phase * 3);
+        const scale = 1 + 0.15 * k * bump;
+        transforms.push(`scale(${scale.toFixed(4)})`);
+        break;
+      }
+      case 'glitch': {
+        const t = Math.floor(localT * 12);
+        const dx = (hash01(t) - 0.5) * 4 * k;
+        const dy = (hash01(t + 10) - 0.5) * 4 * k;
+        transforms.push(`translate(${dx.toFixed(2)}%, ${dy.toFixed(2)}%)`);
+        if (hash01(t + 20) < 0.3 * k) filters.push('hue-rotate(90deg) saturate(2) contrast(1.5)');
+        if (hash01(t + 30) < 0.2 * k) filters.push('invert(1)');
         break;
       }
       case 'vignette':
@@ -167,7 +189,7 @@ export function computeEffectsFrame(clip: Clip, localT: number): EffectsFrame {
     }
   }
 
-  return { transform: transforms.join(' '), vignette, grain, flash };
+  return { transform: transforms.join(' '), filter: filters.join(' '), vignette, grain, flash };
 }
 
 // ---- grain texture ---------------------------------------------------------

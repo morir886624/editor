@@ -49,7 +49,7 @@ export function InstallPrompt() {
 
   return (
     <div className="install-banner" role="dialog" aria-label="Installer l'application">
-      <img className="install-banner__icon" src="/favicon.svg" alt="" width={28} height={28} />
+
       <div className="install-banner__body">
         <strong className="install-banner__title">Installer Video Editor</strong>
         <span className="install-banner__text">

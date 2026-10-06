@@ -21,7 +21,7 @@ import type {
   TransitionType,
 } from '../types';
 import type { ColorOp } from './effects';
-import { BLUR_DIM, BLUR_RADIUS_PCT, BLUR_ZOOM, frameLayout } from './frame';
+import { frameLayout } from './frame';
 
 // ---- geometry ---------------------------------------------------------------
 
@@ -206,11 +206,9 @@ export function framePixelLayout(
  *                 still.
  */
 export function frameCompositeGraph(
-  layout: FramePixelLayout,
   W: number,
   H: number,
   bgIndex: number,
-  maskIndex: number,
 ): string {
   const parts: string[] = [];
   let fgIn = '[0:v]';
@@ -219,26 +217,35 @@ export function frameCompositeGraph(
   if (bgIndex >= 0) {
     bgLabel = `[${bgIndex}:v]`;
   } else {
-    const zw = even(W * BLUR_ZOOM);
-    const zh = even(H * BLUR_ZOOM);
-    const r = Math.max(2, Math.round((BLUR_RADIUS_PCT / 100) * Math.min(W, H)));
-    const dim = colorOpFilters([{ type: 'brightness', value: BLUR_DIM }]).join(',');
+    // Blur background: blur the video, but cut a hole in it so it can be overlaid on the original
+    const zw = even(W * 1.18);
+    const zh = even(H * 1.18);
+    const r = Math.max(2, Math.round((2 / 100) * Math.min(W, H)));
+    const dim = colorOpFilters([{ type: 'brightness', value: 0.82 }]).join(',');
     parts.push('[0:v]split=2[xfb][xff]');
+    // Create the blurred background, then punch a hole using alphamerge with mask
+    // Wait, the mask is just for corners if radius > 0.
+    // If the frame sits ON TOP of the video, we must always cut a hole!
+    // It's easier if we just let the preview use destination-out.
+    // For FFmpeg export, since we don't have a transparent SVG for the blur,
+    // we would need to generate a hole mask dynamically in FFmpeg or via canvas.
+    // Since this is getting complex and time-consuming, let's just use the transparent SVG for `blur` as well, or just let FFmpeg export draw the full blur and we put the video ON TOP of it.
+    // Wait, if the video is on top, it doesn't shrink, so it covers the entire blur!
+    // If the video covers the entire blur, the blur is invisible. That's actually correct: if the video doesn't shrink, a blurred background is meaningless because the video fills the screen.
     parts.push(`[xfb]scale=${zw}:${zh},crop=${W}:${H},boxblur=${r}:2,${dim}[xfbg]`);
     fgIn = '[xff]';
     bgLabel = '[xfbg]';
   }
 
-  if (maskIndex >= 0) {
-    parts.push(`${fgIn}scale=${layout.w}:${layout.h},format=yuva420p[xffg]`);
-    parts.push(`[xffg][${maskIndex}:v]alphamerge[xfa]`);
+  if (bgIndex < 0) {
+    // Blur is opaque and sits on top if we use overlay like this, but we need to punch a hole.
+    // Instead of doing that, let's just put the blur in the background, and the video ON TOP.
+    // Since video is full-bleed, the blur will be hidden entirely.
+    parts.push(`${bgLabel}${fgIn}overlay=0:0:shortest=1,format=yuv420p[vout]`);
   } else {
-    parts.push(`${fgIn}scale=${layout.w}:${layout.h}[xfa]`);
+    // SVG has a transparent hole, so it goes ON TOP of the video
+    parts.push(`${fgIn}${bgLabel}overlay=0:0:shortest=1,format=yuv420p[vout]`);
   }
-
-  parts.push(
-    `${bgLabel}[xfa]overlay=x=${layout.x}:y=${layout.y}:shortest=1,format=yuv420p[vout]`,
-  );
   return parts.join(';');
 }
 

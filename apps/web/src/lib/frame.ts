@@ -43,6 +43,8 @@ export const FRAME_TYPE_OPTIONS: { id: FrameType; label: string; hint: string }[
   { id: 'polaroid', label: 'Polaroid', hint: 'Photo frame with a caption band' },
   { id: 'filmstrip', label: 'Film strip', hint: 'Sprocket holes along the edges' },
   { id: 'blur', label: 'Blurred fill', hint: 'Background is a blurred copy of the video' },
+  { id: 'gradient', label: 'Gradient', hint: 'Colorful gradient background' },
+  { id: 'crt', label: 'CRT TV', hint: 'Retro curved TV monitor' },
 ];
 
 /** Slider ranges (% of the short side). */
@@ -175,14 +177,24 @@ export function frameBackgroundSvg(
   const radius = r1(l.radiusPct * (SVG_SHORT / 100));
 
   const parts: string[] = [];
+  const overlayParts: string[] = [];
+
+  parts.push(
+    `<defs>`,
+    `  <mask id="hole">`,
+    `    <rect width="${W}" height="${H}" fill="white" />`,
+    `    <rect x="${vx}" y="${vy}" width="${vw}" height="${vh}" rx="${radius}" fill="black" />`,
+    `  </mask>`,
+    `</defs>`,
+    `<g mask="url(#hole)">`
+  );
 
   if (frame.type === 'filmstrip') {
     parts.push(`<rect width="${W}" height="${H}" fill="#0d0d0f"/>`);
-    // Sprocket holes centered in each bar, evenly spaced along the strip.
     const vertical = fh >= fw;
-    const bar = vertical ? vx : vy; // bar thickness in svg units
-    const along = vertical ? H : W; // strip length
-    const holeAlong = r1(bar * 0.42); // hole size along the strip
+    const bar = vertical ? vx : vy;
+    const along = vertical ? H : W;
+    const holeAlong = r1(bar * 0.42);
     const holeAcross = r1(bar * 0.34);
     const rx = r1(holeAcross * 0.32);
     const pitch = bar * 0.8;
@@ -199,13 +211,27 @@ export function frameBackgroundSvg(
         );
       }
     }
+  } else if (frame.type === 'gradient') {
+    parts.push(
+      `<linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="100%">` +
+        `<stop offset="0%" style="stop-color:rgb(255,107,107);stop-opacity:1" />` +
+        `<stop offset="100%" style="stop-color:rgb(85,98,112);stop-opacity:1" />` +
+      `</linearGradient>`,
+      `<rect width="${W}" height="${H}" fill="url(#grad1)"/>`
+    );
+  } else if (frame.type === 'crt') {
+    parts.push(`<rect width="${W}" height="${H}" fill="#111"/>`);
+    parts.push(
+      `<rect x="${vx - 10}" y="${vy - 10}" width="${vw + 20}" height="${vh + 20}" rx="${radius + 10}" fill="none" stroke="#333" stroke-width="20"/>`
+    );
   } else {
     parts.push(`<rect width="${W}" height="${H}" fill="${escapeXml(frame.color)}"/>`);
   }
 
+  parts.push(`</g>`);
+
   if (frame.type === 'polaroid') {
-    // Subtle "photo well" shadow line around the video opening.
-    parts.push(
+    overlayParts.push(
       `<rect x="${vx}" y="${vy}" width="${vw}" height="${vh}" rx="${radius}"` +
         ` fill="none" stroke="rgba(0,0,0,0.22)" stroke-width="7"/>`,
     );
@@ -215,7 +241,7 @@ export function frameBackgroundSvg(
       const bandH = H - bandTop;
       const fontSize = r1(Math.min(bandH * 0.42, 90));
       const fill = hexLuminance(frame.color) > 0.55 ? '#41403c' : '#ece9e2';
-      parts.push(
+      overlayParts.push(
         `<text x="${r1(W / 2)}" y="${r1(bandTop + bandH / 2)}" text-anchor="middle"` +
           ` dominant-baseline="central" font-family="'Segoe Script','Bradley Hand',cursive"` +
           ` font-size="${fontSize}" fill="${fill}">${escapeXml(caption)}</text>`,
@@ -227,6 +253,7 @@ export function frameBackgroundSvg(
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}"${size}>` +
     parts.join('') +
+    overlayParts.join('') +
     '</svg>'
   );
 }

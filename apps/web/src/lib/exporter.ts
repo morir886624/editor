@@ -50,14 +50,13 @@ import {
   cropFilter,
   exportDimensions,
   frameCompositeGraph,
-  framePixelLayout,
   transitionAudioGraph,
   transitionVideoGraph,
   type ExportQuality,
   type SeamSpec,
 } from './exportFilters';
 import { planOverlaySamples, renderOverlayLayer } from './overlayRaster';
-import { rasterizeFrameBackground, renderRoundedMask } from './frameRaster';
+import { rasterizeFrameBackground } from './frameRaster';
 import type { AspectRatio, ExportResolution } from '../types';
 
 export const EXPORT_FPS = 30;
@@ -410,7 +409,6 @@ export async function runExport(
       let timelineVideo = 'xtl_v.mp4';
       if (hasFrame) {
         beginStep('Compositing frame…', frameUnits, total);
-        const fl = framePixelLayout(frame, opts.aspect, W, H);
         const args: string[] = ['-i', timelineVideo];
         let bgIndex = -1;
         if (frame.type !== 'blur') {
@@ -419,21 +417,10 @@ export async function runExport(
           // Loop the still at the export fps so overlay timing stays CFR.
           args.push('-framerate', String(EXPORT_FPS), '-loop', '1', '-i', 'xfbg.png');
         }
-        let maskIndex = -1;
-        if (fl.radius > 0) {
-          await write('xfmask.png', await renderRoundedMask(fl.w, fl.h, fl.radius));
-          maskIndex = bgIndex >= 0 ? 2 : 1;
-          // Single frame, deliberately NOT looped: framesync's repeatlast
-          // holds it for every video frame, and alphamerge then ends WITH the
-          // video. (A looped mask never ends, and alphamerge keeps repeating
-          // the video's last frame against it — the graph never terminates;
-          // verified against native ffmpeg.)
-          args.push('-i', 'xfmask.png');
-        }
         await exec(
           [
             ...args,
-            '-filter_complex', frameCompositeGraph(fl, W, H, bgIndex, maskIndex),
+            '-filter_complex', frameCompositeGraph(W, H, bgIndex),
             '-map', '[vout]',
             '-c:v', 'libx264', '-preset', q.preset, '-crf', String(q.crf),
             'xtl_vf.mp4',
@@ -443,7 +430,6 @@ export async function runExport(
         created.add('xtl_vf.mp4');
         await remove(timelineVideo);
         await remove('xfbg.png');
-        await remove('xfmask.png');
         timelineVideo = 'xtl_vf.mp4';
         endStep();
       }
