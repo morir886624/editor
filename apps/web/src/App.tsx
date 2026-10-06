@@ -6,6 +6,7 @@ import { NoticeHost } from './components/NoticeHost';
 import { InstallPrompt } from './components/InstallPrompt';
 import { ExportDialog } from './components/ExportDialog';
 import { SplitDialog } from './components/SplitDialog';
+import { SettingsDialog } from './components/SettingsDialog';
 import { useOverlayHotkeys } from './lib/useOverlayHotkeys';
 import { useIsMobile } from './lib/useIsMobile';
 
@@ -40,6 +41,7 @@ export default function App() {
       <InstallPrompt />
       <ExportDialog />
       <SplitDialog />
+      <SettingsDialog />
     </div>
   );
 }

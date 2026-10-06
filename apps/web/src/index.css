@@ -3189,3 +3189,224 @@ button.modal__download:disabled {
     display: none;
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * Settings Dialog (User Custom UI)
+ * --------------------------------------------------------------------------- */
+
+.settings-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: flex-end; /* Bottom sheet on mobile */
+  pointer-events: none;
+}
+
+@media (min-width: 768px) {
+  .settings-modal {
+    align-items: center;
+    justify-content: center;
+  }
+}
+
+.settings-modal--visible {
+  pointer-events: auto;
+}
+
+.settings-modal__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+.settings-modal--visible .settings-modal__backdrop {
+  opacity: 1;
+}
+
+.settings-modal__sheet {
+  position: relative;
+  width: 100%;
+  max-height: 90vh;
+  background: var(--surface);
+  border-radius: 20px 20px 0 0;
+  display: flex;
+  flex-direction: column;
+  transform: translateY(100%);
+  transition: transform 0.25s cubic-bezier(0.32, 0.72, 0, 1);
+  box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.1);
+}
+@media (min-width: 768px) {
+  .settings-modal__sheet {
+    width: 480px;
+    max-height: 85vh;
+    border-radius: 16px;
+    transform: scale(0.95);
+    opacity: 0;
+    transition: transform 0.2s ease, opacity 0.2s ease;
+  }
+}
+
+.settings-modal--visible .settings-modal__sheet {
+  transform: translateY(0);
+  opacity: 1;
+}
+
+.settings-modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  position: relative;
+}
+.settings-modal__header h2 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.settings-modal__close {
+  position: absolute;
+  left: 16px;
+  background: transparent;
+  border: none;
+  font-size: 1.25rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+}
+
+.settings-modal__body {
+  padding: 0 16px 24px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.settings-section__title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text);
+  padding-left: 4px;
+}
+
+.settings-card {
+  background: var(--surface-hover); /* A slightly offset background */
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+html[data-theme='light'] .settings-card {
+  background: #f4f5f8;
+}
+html[data-theme='dark'] .settings-card {
+  background: #1c1d21;
+}
+
+.settings-item {
+  display: flex;
+  align-items: center;
+  padding: 14px 16px;
+  background: transparent;
+  border: none;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text);
+  gap: 16px;
+  transition: background 0.15s;
+}
+.settings-item:hover {
+  background: rgba(128, 128, 128, 0.05);
+}
+
+.settings-item__icon {
+  width: 20px;
+  height: 20px;
+  color: #4a5568;
+  flex-shrink: 0;
+}
+html[data-theme='dark'] .settings-item__icon {
+  color: #a0aec0;
+}
+
+.settings-item__content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: 2px;
+}
+
+.settings-item__label {
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--text);
+  flex: 1;
+}
+
+.settings-item__sublabel {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.settings-item__chevron {
+  width: 18px;
+  height: 18px;
+  color: #a0aec0;
+}
+
+.settings-divider {
+  height: 1px;
+  background: rgba(0, 0, 0, 0.06);
+  margin-left: 52px; /* aligns with text, bypassing icon (16 pad + 20 icon + 16 gap) */
+}
+html[data-theme='dark'] .settings-divider {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* Toggle Switch */
+.settings-toggle {
+  width: 44px;
+  height: 24px;
+  border-radius: 12px;
+  background: #cbd5e0;
+  position: relative;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+html[data-theme='dark'] .settings-toggle {
+  background: #4a5568;
+}
+.settings-toggle--on {
+  background: #c3d2e6; /* In the screenshot, the active light toggle is a light blueish grey */
+}
+.settings-toggle__knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  background: #fff;
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  transition: transform 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.settings-toggle--on .settings-toggle__knob {
+  transform: translateX(20px);
+}
+.settings-toggle__icon {
+  color: #d69e2e;
+}
