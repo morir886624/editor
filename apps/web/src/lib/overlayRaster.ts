@@ -17,7 +17,7 @@
 
 import { computeOverlayMotion, overlayEnterExit } from './overlay';
 import { overlayLineHeight } from './fonts';
-import type { TextOverlay, TextStyle } from '../types';
+import type { Block, TextStyle } from '../types';
 
 // Matches the preview CSS: .overlay-item { max-width: 92% } and
 // overlayTextStyle() (line-height via overlayLineHeight(), bg padding
@@ -40,10 +40,10 @@ export interface OverlaySample {
   duration: number;
 }
 
-const isVisibleAt = (o: TextOverlay, t: number) => t >= o.startTime && t <= o.endTime;
+const isVisibleAt = (o: Block, t: number) => t >= o.startTime && t <= o.endTime;
 
 /** Is any visible overlay mid-animation (enter/exit ramp) at time t? */
-function isAnimatedAt(overlays: TextOverlay[], t: number): boolean {
+function isAnimatedAt(overlays: Block[], t: number): boolean {
   return overlays.some((o) => {
     if (o.animation === 'none' || !isVisibleAt(o, t)) return false;
     const { enter, exit } = overlayEnterExit(o);
@@ -56,7 +56,7 @@ function isAnimatedAt(overlays: TextOverlay[], t: number): boolean {
  * emit either fps-rate samples (animated interval) or a single held frame.
  */
 export function planOverlaySamples(
-  overlays: TextOverlay[],
+  overlays: Block[],
   total: number,
   fps: number,
 ): OverlaySample[] {
@@ -144,7 +144,7 @@ function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number)
 
 function drawOverlayAt(
   ctx: CanvasRenderingContext2D,
-  o: TextOverlay,
+  o: Block,
   t: number,
   W: number,
   H: number,
@@ -260,7 +260,7 @@ function drawOverlayAt(
  */
 export function renderOverlayLayer(
   ctx: CanvasRenderingContext2D,
-  overlays: TextOverlay[],
+  overlays: Block[],
   t: number,
   W: number,
   H: number,

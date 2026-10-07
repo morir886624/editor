@@ -82,7 +82,7 @@ function MediaDock() {
 
 function TextDock() {
   const hasSelection = useEditorStore((s) =>
-    s.textOverlays.some((o) => o.id === s.selectedItemId),
+    s.blocks.some((o) => o.id === s.selectedItemId),
   );
   if (!hasSelection) {
     return <Placeholder>Select a text overlay on the timeline — or add one with the Text tool.</Placeholder>;

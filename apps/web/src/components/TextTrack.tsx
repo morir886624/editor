@@ -1,7 +1,7 @@
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { useEditorStore } from '../store/editorStore';
 import { PIXELS_PER_SECOND, secondsToPx, pxToSeconds } from '../lib/timeline';
-import type { TextOverlay } from '../types';
+import type { Block } from '../types';
 
 const MIN_OVERLAY_DURATION = 0.3; // seconds
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
@@ -15,13 +15,13 @@ type DragMode = 'move' | 'left' | 'right';
  * checkpoint per gesture (live updates pass { history: false }).
  */
 export function TextTrack({ total }: { total: number }) {
-  const overlays = useEditorStore((s) => s.textOverlays);
+  const overlays = useEditorStore((s) => s.blocks);
   const selectedItemId = useEditorStore((s) => s.selectedItemId);
   const setSelected = useEditorStore((s) => s.setSelected);
-  const updateTextOverlay = useEditorStore((s) => s.updateTextOverlay);
+  const updateBlock = useEditorStore((s) => s.updateBlock);
   const checkpoint = useEditorStore((s) => s.checkpoint);
 
-  const beginDrag = (e: ReactPointerEvent, overlay: TextOverlay, mode: DragMode) => {
+  const beginDrag = (e: ReactPointerEvent, overlay: Block, mode: DragMode) => {
     e.stopPropagation(); // don't let the timeline scrub
     e.preventDefault();
     setSelected(overlay.id);
@@ -39,7 +39,7 @@ export function TextTrack({ total }: { total: number }) {
         moved = true;
       }
       const delta = pxToSeconds(ev.clientX - startX);
-      let patch: Partial<TextOverlay>;
+      let patch: Partial<Block>;
       if (mode === 'move') {
         const ns = clamp(origStart + delta, 0, Math.max(0, total - dur));
         patch = { startTime: ns, endTime: ns + dur };
@@ -50,7 +50,7 @@ export function TextTrack({ total }: { total: number }) {
         const ne = clamp(origEnd + delta, origStart + MIN_OVERLAY_DURATION, total);
         patch = { endTime: ne };
       }
-      updateTextOverlay(overlay.id, patch, { history: false });
+      updateBlock(overlay.id, patch, { history: false });
     };
     const onUp = () => {
       window.removeEventListener('pointermove', onMove);

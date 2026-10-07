@@ -18,7 +18,7 @@ import {
  */
 export function DebugPanel() {
   const clips = useEditorStore((s) => s.clips);
-  const textOverlays = useEditorStore((s) => s.textOverlays);
+  const blocks = useEditorStore((s) => s.blocks);
   const audioTracks = useEditorStore((s) => s.audioTracks);
   const playheadTime = useEditorStore((s) => s.playheadTime);
   const selectedItemId = useEditorStore((s) => s.selectedItemId);
@@ -80,7 +80,7 @@ export function DebugPanel() {
         </div>
         <div>
           <dt>Text overlays</dt>
-          <dd>{textOverlays.length}</dd>
+          <dd>{blocks.length}</dd>
         </div>
         <div>
           <dt>Audio tracks</dt>

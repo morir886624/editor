@@ -45,12 +45,12 @@ export function MobileLayout() {
   const canRedo = useEditorStore((s) => s.future.length > 0);
   const undo = useEditorStore((s) => s.undo);
   const redo = useEditorStore((s) => s.redo);
-  const addTextOverlay = useEditorStore((s) => s.addTextOverlay);
+  const addBlock = useEditorStore((s) => s.addBlock);
   const setSelected = useEditorStore((s) => s.setSelected);
   const splitClip = useEditorStore((s) => s.splitClip);
   const pushNotice = useNoticeStore((s) => s.push);
   const textSelected = useEditorStore((s) =>
-    s.textOverlays.some((o) => o.id === s.selectedItemId),
+    s.blocks.some((o) => o.id === s.selectedItemId),
   );
   const audioSelected = useEditorStore((s) =>
     s.audioTracks.some((a) => a.id === s.selectedItemId),
@@ -71,7 +71,7 @@ export function MobileLayout() {
     if (!hasClips) return;
     // With a text overlay selected, edit it; otherwise add one first (same
     // add-at-playhead behavior as the desktop toolbar) and open its editor.
-    if (!textSelected) setSelected(addTextOverlay());
+    if (!textSelected) setSelected(addBlock());
     setSheet('text');
   };
 

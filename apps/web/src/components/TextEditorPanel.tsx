@@ -20,12 +20,12 @@ import type { SlideDirection, TextAlignment, TextAnimation, TextStyle } from '..
  * a drag is a single undo step; discrete controls commit normally.
  */
 export function TextEditorPanel() {
-  const overlays = useEditorStore((s) => s.textOverlays);
+  const overlays = useEditorStore((s) => s.blocks);
   const selectedItemId = useEditorStore((s) => s.selectedItemId);
-  const updateTextOverlay = useEditorStore((s) => s.updateTextOverlay);
-  const removeTextOverlay = useEditorStore((s) => s.removeTextOverlay);
-  const duplicateTextOverlay = useEditorStore((s) => s.duplicateTextOverlay);
-  const moveTextOverlayLayer = useEditorStore((s) => s.moveTextOverlayLayer);
+  const updateBlock = useEditorStore((s) => s.updateBlock);
+  const removeBlock = useEditorStore((s) => s.removeBlock);
+  const duplicateBlock = useEditorStore((s) => s.duplicateBlock);
+  const moveBlockLayer = useEditorStore((s) => s.moveBlockLayer);
   const copyOverlayStyle = useEditorStore((s) => s.copyOverlayStyle);
   const pasteOverlayStyle = useEditorStore((s) => s.pasteOverlayStyle);
   const styleClipboard = useEditorStore((s) => s.styleClipboard);
@@ -46,12 +46,12 @@ export function TextEditorPanel() {
   const overlayIndex = overlays.findIndex((o) => o.id === id);
 
   // discrete edit (one undo step)
-  const setOverlay = (patch: Parameters<typeof updateTextOverlay>[1]) =>
-    updateTextOverlay(id, patch);
-  const setStyle = (patch: Partial<TextStyle>) => updateTextOverlay(id, { style: patch });
+  const setOverlay = (patch: Parameters<typeof updateBlock>[1]) =>
+    updateBlock(id, patch);
+  const setStyle = (patch: Partial<TextStyle>) => updateBlock(id, { style: patch });
   // live edit during a drag gesture (no per-tick history)
   const liveStyle = (patch: Partial<TextStyle>) =>
-    updateTextOverlay(id, { style: patch }, { history: false });
+    updateBlock(id, { style: patch }, { history: false });
 
   // KFGQPC HAFS is user-imported (session-only), never bundled — see the
   // license note below and /public/fonts/LICENSE.md.
@@ -89,7 +89,7 @@ export function TextEditorPanel() {
             type="button"
             className="texted__action"
             title="Duplicate this overlay (Ctrl+D)"
-            onClick={() => duplicateTextOverlay(id)}
+            onClick={() => duplicateBlock(id)}
           >
             ⧉ Duplicate
           </button>
@@ -123,7 +123,7 @@ export function TextEditorPanel() {
             className="texted__action"
             title="Bring forward (draw on top of the next overlay)"
             disabled={overlayIndex >= overlays.length - 1}
-            onClick={() => moveTextOverlayLayer(id, 'forward')}
+            onClick={() => moveBlockLayer(id, 'forward')}
           >
             ▲ Forward
           </button>
@@ -132,7 +132,7 @@ export function TextEditorPanel() {
             className="texted__action"
             title="Send backward (draw behind the previous overlay)"
             disabled={overlayIndex <= 0}
-            onClick={() => moveTextOverlayLayer(id, 'backward')}
+            onClick={() => moveBlockLayer(id, 'backward')}
           >
             ▼ Backward
           </button>
@@ -262,7 +262,7 @@ export function TextEditorPanel() {
             value={Math.round(overlay.rotation)}
             onPointerDown={checkpoint}
             onChange={(e) =>
-              updateTextOverlay(id, { rotation: Number(e.target.value) }, { history: false })
+              updateBlock(id, { rotation: Number(e.target.value) }, { history: false })
             }
           />
           <em>{Math.round(overlay.rotation)}°</em>
@@ -399,7 +399,7 @@ export function TextEditorPanel() {
         <button
           type="button"
           className="texted__delete"
-          onClick={() => removeTextOverlay(id)}
+          onClick={() => removeBlock(id)}
         >
           Delete overlay
         </button>

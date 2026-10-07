@@ -33,7 +33,7 @@ import { aspectDims, frameBackgroundUrl, frameLayout } from '../lib/frame';
 import { computeCropLayout } from '../lib/crop';
 import { CropOverlay } from './CropOverlay';
 import { formatTime, formatTimecode } from '../lib/timeline';
-import type { AspectRatio, Clip, TextOverlay } from '../types';
+import type { AspectRatio, Clip, Block } from '../types';
 
 const ASPECT_CSS: Record<AspectRatio, string> = {
   '9:16': '9 / 16',
@@ -146,13 +146,13 @@ export function PreviewPlayer() {
   const isPlaying = useEditorStore((s) => s.isPlaying);
   const aspectRatio = useEditorStore((s) => s.settings.aspectRatio);
   const frame = useEditorStore((s) => s.settings.frame);
-  const textOverlays = useEditorStore((s) => s.textOverlays);
+  const blocks = useEditorStore((s) => s.blocks);
   const selectedItemId = useEditorStore((s) => s.selectedItemId);
   const cropEditingClipId = useEditorStore((s) => s.cropEditingClipId);
   const setPlayhead = useEditorStore((s) => s.setPlayhead);
   const setPlaying = useEditorStore((s) => s.setPlaying);
   const setSelected = useEditorStore((s) => s.setSelected);
-  const updateTextOverlay = useEditorStore((s) => s.updateTextOverlay);
+  const updateBlock = useEditorStore((s) => s.updateBlock);
   const checkpoint = useEditorStore((s) => s.checkpoint);
   const updateSettings = useEditorStore((s) => s.updateSettings);
 
@@ -672,7 +672,7 @@ export function PreviewPlayer() {
   };
 
   /** Overlay anchor center in viewport px (the % position on the frame). */
-  const overlayCenterPx = (overlay: TextOverlay) => {
+  const overlayCenterPx = (overlay: Block) => {
     const frameEl = frameRef.current;
     if (!frameEl) return null;
     const rect = frameEl.getBoundingClientRect();
@@ -684,7 +684,7 @@ export function PreviewPlayer() {
   };
 
   // Drag to move; store x/y as % so it's aspect- and export-correct.
-  const beginOverlayDrag = (e: ReactPointerEvent, overlay: TextOverlay) => {
+  const beginOverlayDrag = (e: ReactPointerEvent, overlay: Block) => {
     e.stopPropagation();
     if (editingId === overlay.id) return; // inline edit owns the pointer (caret)
     e.preventDefault();
@@ -701,13 +701,13 @@ export function PreviewPlayer() {
     runGesture((ev) => {
       const nx = clampPct(origX + ((ev.clientX - startX) / rect.width) * 100);
       const ny = clampPct(origY + ((ev.clientY - startY) / rect.height) * 100);
-      updateTextOverlay(overlay.id, { x: nx, y: ny }, { history: false });
+      updateBlock(overlay.id, { x: nx, y: ny }, { history: false });
     });
   };
 
   // Corner handles: scale the distance pointer↔anchor into a fontSize factor.
   // Distance-based, so it behaves the same at any rotation angle.
-  const beginOverlayResize = (e: ReactPointerEvent, overlay: TextOverlay) => {
+  const beginOverlayResize = (e: ReactPointerEvent, overlay: Block) => {
     e.stopPropagation();
     e.preventDefault();
     const c = overlayCenterPx(overlay);
@@ -720,14 +720,14 @@ export function PreviewPlayer() {
       const factor = Math.hypot(ev.clientX - c.cx, ev.clientY - c.cy) / startDist;
       const fontSize =
         Math.round(clamp(origSize * factor, MIN_FONT_SIZE, MAX_FONT_SIZE) * 10) / 10;
-      updateTextOverlay(overlay.id, { style: { fontSize } }, { history: false });
+      updateBlock(overlay.id, { style: { fontSize } }, { history: false });
     });
   };
 
   // Rotation handle (sits above the box): pointer bearing from the anchor,
   // +90° because the handle's rest position is straight up. Snaps to the
   // nearest 45° step when close, so 0/90/180 are easy to hit exactly.
-  const beginOverlayRotate = (e: ReactPointerEvent, overlay: TextOverlay) => {
+  const beginOverlayRotate = (e: ReactPointerEvent, overlay: Block) => {
     e.stopPropagation();
     e.preventDefault();
     const c = overlayCenterPx(overlay);
@@ -740,13 +740,13 @@ export function PreviewPlayer() {
       // normalize to (-180, 180]
       if (deg > 180) deg -= 360;
       if (deg <= -180) deg += 360;
-      updateTextOverlay(overlay.id, { rotation: Math.round(deg) }, { history: false });
+      updateBlock(overlay.id, { rotation: Math.round(deg) }, { history: false });
     });
   };
 
   // --- inline text editing (double-click) ------------------------------------
 
-  const beginInlineEdit = (overlay: TextOverlay) => {
+  const beginInlineEdit = (overlay: Block) => {
     if (overlay.locked) return;
     setPlaying(false); // hold the frame while typing
     setSelected(overlay.id);
@@ -756,10 +756,10 @@ export function PreviewPlayer() {
 
   /** Seed the contenteditable once per edit session: initial text + focus +
    *  select-all. The div is keyed per mode so React remounts it cleanly. */
-  const seedInlineEdit = (el: HTMLDivElement | null, overlay: TextOverlay) => {
+  const seedInlineEdit = (el: HTMLDivElement | null, overlay: Block) => {
     if (!el || el.dataset.editFor === overlay.id) return;
     el.dataset.editFor = overlay.id;
-    el.textContent = overlay.text;
+    el.textContent = (overlay?.text || '');
     el.focus();
     const sel = window.getSelection();
     if (sel) {
@@ -770,7 +770,7 @@ export function PreviewPlayer() {
     }
   };
 
-  const finishInlineEdit = (overlay: TextOverlay, el: HTMLElement) => {
+  const finishInlineEdit = (overlay: Block, el: HTMLElement) => {
     setEditingId(null);
     if (editCancelRef.current) {
       editCancelRef.current = false;
@@ -778,7 +778,7 @@ export function PreviewPlayer() {
     }
     // innerText maps the contenteditable's line breaks back to \n.
     const text = el.innerText.replace(/\r\n?/g, '\n').replace(/\n$/, '');
-    if (text !== overlay.text) updateTextOverlay(overlay.id, { text }); // one undo step
+    if (text !== (overlay?.text || '')) updateBlock(overlay.id, { text }); // one undo step
   };
 
   // Blur commits most edits, but drag handlers preventDefault() on pointerdown,
@@ -793,7 +793,7 @@ export function PreviewPlayer() {
       if (s.selectedItemId === editingId || committingRef.current) return;
       committingRef.current = true;
       const el = frameRef.current?.querySelector<HTMLElement>('.overlay-item--editing');
-      const overlay = s.textOverlays.find((t) => t.id === editingId);
+      const overlay = s.blocks.find((t) => t.id === editingId);
       if (el && overlay) finishInlineEdit(overlay, el);
       else setEditingId(null); // overlay deleted mid-edit — nothing to commit
       committingRef.current = false;
@@ -876,7 +876,7 @@ export function PreviewPlayer() {
           {/* Overlay layer: container ignores pointer events so it doesn't
               swallow drops/clicks; each overlay re-enables them. */}
           <div className="overlay-layer">
-            {textOverlays.map((o) => {
+            {blocks.map((o) => {
               const r = computeOverlayRender(o, playheadTime);
               const selected = o.id === selectedItemId;
               // Editing requires selection: clicking anywhere else blurs the
@@ -909,7 +909,7 @@ export function PreviewPlayer() {
                     transform: `translate(-50%, -50%) ${anim}`.trimEnd(),
                     // Full text (not the typewriter-truncated r.text) so the
                     // derived RTL direction can't flip mid-animation.
-                    ...overlayTextStyle(o.style, o.text),
+                    ...overlayTextStyle(o.style, (o.text || '')),
                   }}
                   contentEditable={editing ? 'plaintext-only' : undefined}
                   suppressContentEditableWarning={editing || undefined}
@@ -938,7 +938,7 @@ export function PreviewPlayer() {
                     setSelected(o.id);
                   }}
                 >
-                  {editing ? null : ghost ? o.text : r.text}
+                  {editing ? null : ghost ? (o.text || '') : r.text}
                   {selected && !editing && !o.locked && (
                     <>
                       <span className="ovh ovh--nw" onPointerDown={(e) => beginOverlayResize(e, o)} />

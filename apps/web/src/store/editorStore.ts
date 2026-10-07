@@ -2,7 +2,7 @@
 // Editor store (Zustand)
 //
 // Design notes:
-//  - Document state (clips/textOverlays/audioTracks/settings) is snapshotted
+//  - Document state (clips/blocks/audioTracks/settings) is snapshotted
 //    for undo/redo. UI state (playheadTime/selectedItemId) is NOT — undoing a
 //    playhead nudge would be infuriating.
 //  - Every action that can change video length builds a *candidate* clips
@@ -27,7 +27,8 @@ import type {
   SlideDirection,
   VideoEffectType,
   TextAnimation,
-  TextOverlay,
+  Block,
+  BlockType,
   TextStyle,
 } from '../types';
 import {
@@ -116,7 +117,8 @@ export interface NewSourceInput {
   duration: number;
 }
 
-export interface NewTextOverlayInput {
+export interface NewBlockInput {
+  type?: BlockType; // default = 'text'
   text?: string;
   startTime?: number; // default = current playhead
   endTime?: number; // default = start + 3s
@@ -236,21 +238,21 @@ export interface EditorState extends EditorDocument {
   removeClipEffect: (clipId: string, effectId: string) => void;
 
   // text overlay actions
-  addTextOverlay: (input?: NewTextOverlayInput) => string;
-  updateTextOverlay: (
+  addBlock: (input?: NewBlockInput) => string;
+  updateBlock: (
     id: string,
     // style may be a partial — it's merged onto the existing style
-    patch: Partial<Omit<TextOverlay, 'id' | 'style'>> & { style?: Partial<TextStyle> },
+    patch: Partial<Omit<Block, 'id' | 'style'>> & { style?: Partial<TextStyle> },
     options?: { history?: boolean },
   ) => void;
-  removeTextOverlay: (id: string) => void;
+  removeBlock: (id: string) => void;
   /** Clone overlay `id` (same style/rotation/duration), placed at the current
    *  playhead and nudged a few % so the copy is visibly separate. Selects the
    *  copy. Returns its id, or null if the source doesn't exist. */
-  duplicateTextOverlay: (id: string) => string | null;
+  duplicateBlock: (id: string) => string | null;
   /** Move overlay `id` one step up ('forward' = drawn later = on top) or down
-   *  in the stacking order (= array order, see TextOverlay docs). */
-  moveTextOverlayLayer: (id: string, direction: 'forward' | 'backward') => void;
+   *  in the stacking order (= array order, see Block docs). */
+  moveBlockLayer: (id: string, direction: 'forward' | 'backward') => void;
   /** Style clipboard (UI state, not in undo history). */
   styleClipboard: OverlayStyleClipboard | null;
   copyOverlayStyle: (id: string) => void;
@@ -289,7 +291,7 @@ export interface EditorState extends EditorDocument {
 /** Extract the document slice (the part undo/redo cares about). */
 const docOf = (s: EditorDocument): EditorDocument => ({
   clips: s.clips,
-  textOverlays: s.textOverlays,
+  blocks: s.blocks,
   audioTracks: s.audioTracks,
   settings: s.settings,
 });
@@ -310,7 +312,7 @@ const pushHistory = (s: EditorState): Pick<EditorState, 'past' | 'future'> => ({
 export const useEditorStore = create<EditorState>((set, get) => ({
   // initial document
   clips: [],
-  textOverlays: [],
+  blocks: [],
   audioTracks: [],
   settings: DEFAULT_SETTINGS,
 
@@ -674,14 +676,15 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   // ---- text overlay actions (do not count toward the 60s video limit) ----
-  addTextOverlay: (input = {}) => {
+  addBlock: (input = {}) => {
     const state = get();
     const total = computeTotalDuration(state.clips);
     // Keep the overlay inside the timeline, leaving at least a little duration.
     const start = Math.min(Math.max(0, input.startTime ?? state.playheadTime), Math.max(0, total - 0.5));
     const end = input.endTime ?? Math.min(start + 3, total);
-    const overlay: TextOverlay = {
-      id: uid('text'),
+    const overlay: Block = {
+      id: uid('block'),
+      type: input.type ?? 'text',
       text: input.text ?? 'Tap to edit',
       startTime: start,
       endTime: end,
@@ -693,13 +696,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       animation: input.animation ?? 'none',
       slideFrom: 'left',
     };
-    set({ textOverlays: [...state.textOverlays, overlay], ...pushHistory(state) });
+    set({ blocks: [...state.blocks, overlay], ...pushHistory(state) });
     return overlay.id;
   },
 
-  duplicateTextOverlay: (id) => {
+  duplicateBlock: (id) => {
     const state = get();
-    const src = state.textOverlays.find((t) => t.id === id);
+    const src = state.blocks.find((t) => t.id === id);
     if (!src) return null;
     const total = computeTotalDuration(state.clips);
     // Same duration, placed at the playhead (clamped inside the timeline);
@@ -711,9 +714,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       start = src.startTime;
       end = src.endTime;
     }
-    const copy: TextOverlay = {
+    const copy: Block = {
       ...src,
-      id: uid('text'),
+      id: uid('block'),
+      type: src.type || 'text',
       style: { ...src.style },
       startTime: start,
       endTime: end,
@@ -722,7 +726,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       locked: false, // a fresh copy is there to be moved
     };
     set({
-      textOverlays: [...state.textOverlays, copy],
+      blocks: [...state.blocks, copy],
       selectedItemId: copy.id,
       selectedTransitionId: null,
       ...pushHistory(state),
@@ -730,19 +734,19 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     return copy.id;
   },
 
-  moveTextOverlayLayer: (id, direction) => {
+  moveBlockLayer: (id, direction) => {
     const state = get();
-    const i = state.textOverlays.findIndex((t) => t.id === id);
+    const i = state.blocks.findIndex((t) => t.id === id);
     const j = direction === 'forward' ? i + 1 : i - 1;
-    if (i < 0 || j < 0 || j >= state.textOverlays.length) return;
-    const next = [...state.textOverlays];
+    if (i < 0 || j < 0 || j >= state.blocks.length) return;
+    const next = [...state.blocks];
     [next[i], next[j]] = [next[j], next[i]];
-    set({ textOverlays: next, ...pushHistory(state) });
+    set({ blocks: next, ...pushHistory(state) });
   },
 
   styleClipboard: null,
   copyOverlayStyle: (id) => {
-    const t = get().textOverlays.find((o) => o.id === id);
+    const t = get().blocks.find((o) => o.id === id);
     if (!t) return;
     // UI state only — copying is not an undoable document edit.
     set({
@@ -752,9 +756,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   pasteOverlayStyle: (id) => {
     const state = get();
     const clip = state.styleClipboard;
-    if (!clip || !state.textOverlays.some((t) => t.id === id)) return;
+    if (!clip || !state.blocks.some((t) => t.id === id)) return;
     set({
-      textOverlays: state.textOverlays.map((t) =>
+      blocks: state.blocks.map((t) =>
         t.id === id
           ? { ...t, style: { ...clip.style }, animation: clip.animation, slideFrom: clip.slideFrom }
           : t,
@@ -763,22 +767,22 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     });
   },
 
-  updateTextOverlay: (id, patch, options) => {
+  updateBlock: (id, patch, options) => {
     const state = get();
-    if (!state.textOverlays.some((t) => t.id === id)) return;
-    const textOverlays = state.textOverlays.map((t) =>
+    if (!state.blocks.some((t) => t.id === id)) return;
+    const blocks = state.blocks.map((t) =>
       t.id === id ? { ...t, ...patch, style: { ...t.style, ...patch.style } } : t,
     );
     // history: false during a gesture (a checkpoint was taken at gesture start).
-    if (options?.history === false) set({ textOverlays });
-    else set({ textOverlays, ...pushHistory(state) });
+    if (options?.history === false) set({ blocks });
+    else set({ blocks, ...pushHistory(state) });
   },
 
-  removeTextOverlay: (id) => {
+  removeBlock: (id) => {
     const state = get();
-    if (!state.textOverlays.some((t) => t.id === id)) return;
+    if (!state.blocks.some((t) => t.id === id)) return;
     set({
-      textOverlays: state.textOverlays.filter((t) => t.id !== id),
+      blocks: state.blocks.filter((t) => t.id !== id),
       selectedItemId: state.selectedItemId === id ? null : state.selectedItemId,
       ...pushHistory(state),
     });

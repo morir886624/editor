@@ -8,7 +8,7 @@
 // ---------------------------------------------------------------------------
 
 import type { CSSProperties } from 'react';
-import type { SlideDirection, TextAnimation, TextOverlay, TextStyle } from '../types';
+import type { SlideDirection, TextAnimation, Block, TextStyle } from '../types';
 import { overlayDirection, overlayLineHeight } from './fonts';
 
 // Entrance/exit ramp length (seconds), each clamped to half the overlay length.
@@ -33,7 +33,7 @@ const SLIDE_VECTOR: Record<SlideDirection, { x: number; y: number }> = {
 };
 
 /** Enter/exit ramp lengths for an overlay, clamped to half its duration. */
-export function overlayEnterExit(o: Pick<TextOverlay, 'startTime' | 'endTime'>): {
+export function overlayEnterExit(o: Pick<Block, 'startTime' | 'endTime'>): {
   enter: number;
   exit: number;
 } {
@@ -56,9 +56,9 @@ export interface OverlayMotion {
   scale: number; // uniform scale about the element center
 }
 
-export function computeOverlayMotion(o: TextOverlay, t: number): OverlayMotion {
+export function computeOverlayMotion(o: Block, t: number): OverlayMotion {
   if (t < o.startTime || t > o.endTime) {
-    return { visible: false, opacity: 0, text: o.text, dxPct: 0, dyPct: 0, scale: 1 };
+    return { visible: false, opacity: 0, text: (o.text || ''), dxPct: 0, dyPct: 0, scale: 1 };
   }
 
   const { enter, exit } = overlayEnterExit(o);
@@ -68,7 +68,7 @@ export function computeOverlayMotion(o: TextOverlay, t: number): OverlayMotion {
 
   const anim: TextAnimation = o.animation;
   let opacity = 1;
-  let text = o.text;
+  let text = (o.text || '');
   let dxPct = 0;
   let dyPct = 0;
   let scale = 1;
@@ -95,8 +95,8 @@ export function computeOverlayMotion(o: TextOverlay, t: number): OverlayMotion {
       break;
     }
     case 'typewriter': {
-      const chars = Math.ceil(eIn * o.text.length);
-      text = o.text.slice(0, chars);
+      const chars = Math.ceil(eIn * (o.text || '').length);
+      text = (o.text || '').slice(0, chars);
       // hidden until the first character appears; fades on exit
       opacity = chars === 0 ? 0 : easeOutCubic(eOut);
       break;
@@ -119,15 +119,15 @@ export interface OverlayRender {
 
 /** Rotation-only transform ('' when 0) — for the editor's ghost/inline-edit
  *  states, which suppress the animation but must keep the stored rotation. */
-export function overlayStaticTransform(o: Pick<TextOverlay, 'rotation'>): string {
+export function overlayStaticTransform(o: Pick<Block, 'rotation'>): string {
   return o.rotation ? `rotate(${o.rotation}deg)` : '';
 }
 
 /** Resolve an overlay's animated state as CSS, for the preview DOM. */
-export function computeOverlayRender(o: TextOverlay, t: number): OverlayRender {
+export function computeOverlayRender(o: Block, t: number): OverlayRender {
   const m = computeOverlayMotion(o, t);
   if (!m.visible) {
-    return { visible: false, opacity: 0, transform: overlayStaticTransform(o), text: o.text };
+    return { visible: false, opacity: 0, transform: overlayStaticTransform(o), text: (o.text || '') };
   }
 
   // Order matters and the export rasterizer mirrors it: screen-space slide

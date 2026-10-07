@@ -218,15 +218,19 @@ export interface Clip {
 
 /**
  * A timed text element rendered on top of the video.
- * Array order in EditorDocument.textOverlays IS the stacking order (first =
+ * Array order in EditorDocument.blocks IS the stacking order (first =
  * bottom, last = top) — both the preview DOM and the export rasterizer render
  * in array order, so z-order edits are plain array reorders.
  */
-export interface TextOverlay {
+export type BlockType = 'text' | 'image' | 'video' | 'shape';
+
+export interface Block {
   id: string;
-  text: string;
-  startTime: number; // timeline seconds the overlay appears
-  endTime: number; // timeline seconds the overlay disappears
+  type: BlockType;
+  text?: string;
+  src?: string; // object URL for image/video/audio
+  startTime: number; // timeline seconds the block appears
+  endTime: number; // timeline seconds the block disappears
   /** Anchor position as percentages of the preview frame (0..100), so it stays
    *  correct across aspect ratios and at export. (50,50) = centered. */
   x: number;
@@ -301,7 +305,7 @@ export interface ProjectSettings {
  */
 export interface EditorDocument {
   clips: Clip[];
-  textOverlays: TextOverlay[];
+  blocks: Block[];
   audioTracks: AudioTrack[];
   settings: ProjectSettings;
 }

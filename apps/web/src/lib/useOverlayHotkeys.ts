@@ -38,19 +38,19 @@ export function useOverlayHotkeys() {
       // The remaining shortcuts act on the SELECTED TEXT OVERLAY only —
       // selectedItemId is shared with clips/audio, so membership decides.
       const overlay = s.selectedItemId
-        ? s.textOverlays.find((t) => t.id === s.selectedItemId)
+        ? s.blocks.find((t) => t.id === s.selectedItemId)
         : undefined;
       if (!overlay) return;
 
       if (mod && key === 'd') {
         e.preventDefault(); // keep the browser's bookmark dialog closed
-        s.duplicateTextOverlay(overlay.id);
+        s.duplicateBlock(overlay.id);
         return;
       }
       if (e.key === 'Delete' || e.key === 'Backspace') {
         if (overlay.locked) return; // lock protects against stray deletes
         e.preventDefault();
-        s.removeTextOverlay(overlay.id);
+        s.removeBlock(overlay.id);
       }
     };
     window.addEventListener('keydown', onKey);

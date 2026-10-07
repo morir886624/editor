@@ -108,7 +108,7 @@ export async function runExport(
   token: CancelToken,
 ): Promise<ExportResult> {
   // Snapshot the document once — the export renders this exact state.
-  const { clips, textOverlays, audioTracks, settings } = useEditorStore.getState();
+  const { clips, blocks, audioTracks, settings } = useEditorStore.getState();
   const frame = settings.frame;
   const hasFrame = frame.type !== 'none';
 
@@ -132,7 +132,7 @@ export async function runExport(
   );
   const hasTransitions = seams.some((s) => s !== null);
 
-  const overlays = textOverlays.filter((o) => o.endTime > o.startTime && o.startTime < total);
+  const overlays = blocks.filter((o) => o.endTime > o.startTime && o.startTime < total);
   const overlaySamples = overlays.length ? planOverlaySamples(overlays, total, EXPORT_FPS) : [];
   const hasOverlays = overlaySamples.length > 0;
 

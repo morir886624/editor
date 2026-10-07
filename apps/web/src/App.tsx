@@ -1,3 +1,4 @@
+import { Sidebar } from './components/Sidebar';
 import { Toolbar } from './components/Toolbar';
 import { DockLayout } from './components/DockLayout';
 import { MobileLayout } from './components/MobileLayout';
@@ -31,8 +32,11 @@ export default function App() {
       ) : (
         <>
           <Toolbar />
-          <div className="app__dock">
-            <DockLayout />
+          <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+            <Sidebar />
+            <div className="app__dock" style={{ flex: 1 }}>
+              <DockLayout />
+            </div>
           </div>
           <DebugPanel />
         </>

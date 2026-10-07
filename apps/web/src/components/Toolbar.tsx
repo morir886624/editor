@@ -24,7 +24,7 @@ export function Toolbar() {
   const audioInputRef = useRef<HTMLInputElement>(null);
 
   const hasClips = useEditorStore((s) => s.clips.length > 0);
-  const addTextOverlay = useEditorStore((s) => s.addTextOverlay);
+  const addBlock = useEditorStore((s) => s.addBlock);
   const setSelected = useEditorStore((s) => s.setSelected);
   const splitClip = useEditorStore((s) => s.splitClip);
   const pushNotice = useNoticeStore((s) => s.push);
@@ -52,7 +52,7 @@ export function Toolbar() {
   };
 
   const addText = () => {
-    const id = addTextOverlay(); // at the current playhead, default 3s
+    const id = addBlock(); // at the current playhead, default 3s
     setSelected(id);
   };
 
